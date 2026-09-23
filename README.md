@@ -8,8 +8,6 @@
 状态 → 模型决策 → 工具调用 → 观察结果 → 更新证据 → 检查/重规划 → 结束
 ```
 
-详细的渐进式设计见 [novel-agent-progressive-plan.md](novel-agent-progressive-plan.md)。
-
 ## 当前能力
 
 - 读取 UTF-8、UTF-8-SIG、UTF-16、GB18030 等常见 TXT。
