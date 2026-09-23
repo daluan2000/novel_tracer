@@ -98,6 +98,43 @@ MODEL_THINKING_MODE=disabled
 
 ## 使用方法
 
+### Web 图形化工作台
+
+安装 Python 与前端依赖并构建：
+
+```powershell
+python -m pip install -e ".[dev]"
+Set-Location frontend
+npm install
+npm run build
+Set-Location ..
+```
+
+启动本机服务：
+
+```powershell
+python -m novel_agent.web
+```
+
+然后访问 <http://127.0.0.1:8000>。页面支持：
+
+- 拖拽或选择 TXT，并查看编码、章节与 Chunk 概览。
+- 分页浏览识别出的章节结构。
+- 不调用模型的关键词检索与上下文展开。
+- 实时显示 Agent 节点图、调查计划、执行时间线、证据和最终答案。
+- 在当前模型调用结束后的节点边界安全停止任务。
+
+开发前端时，可分别运行后端与 Vite；`/api` 会自动代理到 8000 端口：
+
+```powershell
+# 终端 1
+python -m novel_agent.web
+
+# 终端 2
+Set-Location frontend
+npm run dev
+```
+
 ### 1. 检查小说结构
 
 该命令不调用模型：
@@ -220,6 +257,10 @@ termination_reason    结束原因
 ```powershell
 conda activate base
 python -X utf8 -m pytest
+
+Set-Location frontend
+npm test
+npm run build
 ```
 
 测试覆盖：
@@ -248,11 +289,15 @@ src/novel_agent/
 ├── novel_loader.py        预处理入口
 ├── prompts.py             节点职责 Prompt
 ├── repository.py          本地小说查询与引用校验
+├── service.py             CLI/Web 共用的加载与 Agent 执行服务
 ├── state.py               Agent 显式状态
 ├── structure_detector.py  多策略标题识别和全局评分
 ├── text_normalizer.py     编码与源文本加载
 ├── tools.py               四个只读 Tool
-└── tracing.py             JSONL Trace 与运行指标
+├── tracing.py             JSONL Trace 与运行指标
+└── web.py                 FastAPI、上传缓存、任务管理与 SSE
+
+frontend/                  Vue 3 + TypeScript 单页工作台
 ```
 
 ## 已知边界

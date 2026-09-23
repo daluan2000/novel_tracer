@@ -3,17 +3,14 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-import time
 import uuid
 from pathlib import Path
 from typing import Any
 
-from novel_agent.config import ModelConfig, default_max_steps
-from novel_agent.graph import build_agent_graph
+from novel_agent.config import default_max_steps
 from novel_agent.repository import NovelCorpus
-from novel_agent.state import initial_state
-from novel_agent.tools import build_tools
-from novel_agent.tracing import TraceWriter, run_metrics
+from novel_agent.service import execute_agent, load_corpus
+from novel_agent.tracing import run_metrics
 
 
 def _configure_console() -> None:
@@ -27,13 +24,12 @@ def _print_json(value: Any) -> None:
 
 
 def _load_corpus(path: str) -> NovelCorpus:
-    started = time.perf_counter()
-    corpus = NovelCorpus.from_path(path)
-    elapsed = time.perf_counter() - started
+    loaded = load_corpus(path)
+    corpus = loaded.corpus
     print(
         f"已加载：{Path(path).name} | 编码={corpus.document.source.encoding} | "
         f"sections={len(corpus.document.sections)} | chunks={len(corpus.document.chunks)} | "
-        f"耗时={elapsed:.2f}s",
+        f"耗时={loaded.elapsed_seconds:.2f}s",
         file=sys.stderr,
     )
     return corpus
@@ -91,16 +87,17 @@ def run_agent(
     thread_id: str,
     trace_path: Path,
 ) -> dict[str, Any]:
-    model = ModelConfig.from_env().create_model()
-    tools = build_tools(corpus)
-    graph = build_agent_graph(model=model, tools=tools, corpus=corpus)
-    config = {"configurable": {"thread_id": thread_id}, "recursion_limit": max_steps * 5 + 20}
-    trace = TraceWriter(trace_path)
-    for event in graph.stream(initial_state(question, max_steps), config=config, stream_mode="updates"):
-        for node, update in event.items():
-            trace.append(node, update)
-            print(_compact_update(node, update), file=sys.stderr)
-    return dict(graph.get_state(config).values)
+    result = execute_agent(
+        corpus,
+        question,
+        max_steps=max_steps,
+        thread_id=thread_id,
+        trace_path=trace_path,
+        on_update=lambda node, update, _state: print(
+            _compact_update(node, update), file=sys.stderr
+        ),
+    )
+    return result.state
 
 
 def command_ask(args: argparse.Namespace) -> int:

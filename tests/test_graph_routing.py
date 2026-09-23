@@ -16,6 +16,7 @@ from novel_agent.graph import (
 )
 from novel_agent.models import FinalAnswer, ObservationOutput, PlanOutput, ReplanOutput, ReviewResult
 from novel_agent.repository import NovelCorpus
+from novel_agent.service import execute_agent
 from novel_agent.state import initial_state
 from novel_agent.tools import build_tools
 
@@ -131,6 +132,26 @@ def test_full_graph_executes_tool_loop_with_scripted_model(tmp_path) -> None:
     assert len(result["tool_call_history"]) == 1
     assert result["tool_call_history"][0]["tool"] == "search_novel"
     assert result["termination_reason"] == "evidence_sufficient"
+
+
+def test_shared_execution_service_streams_updates(tmp_path) -> None:
+    path = tmp_path / "sample.txt"
+    path.write_text("第一章 开始\n\n人物在这里出现。" * 100, encoding="utf-8")
+    corpus = NovelCorpus.from_path(path)
+    seen_nodes: list[str] = []
+
+    result = execute_agent(
+        corpus,
+        "人物在哪里出现？",
+        max_steps=5,
+        thread_id="service-test",
+        model=ScriptedChatModel(),
+        on_update=lambda node, _update, _state: seen_nodes.append(node),
+    )
+
+    assert result.cancelled is False
+    assert result.state["final_answer"] == "基于现有证据完成。"
+    assert seen_nodes == ["planner", "researcher", "tools", "observe", "checker", "writer"]
 
 
 def test_research_history_preserves_latest_tool_pair() -> None:
