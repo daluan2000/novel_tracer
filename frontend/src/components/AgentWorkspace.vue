@@ -112,6 +112,8 @@ async function toggleEvidence(evidence: Evidence) {
         <p class="mini-title">运行指标</p>
         <dl>
           <div><dt>调查步数</dt><dd>{{ view.snapshot.metrics.step_count ?? 0 }}</dd></div>
+          <div><dt>模型调用</dt><dd>{{ view.snapshot.metrics.model_call_count ?? 0 }}</dd></div>
+          <div><dt>总 Token</dt><dd>{{ view.snapshot.metrics.token_usage?.total_tokens ?? 0 }}</dd></div>
           <div><dt>工具调用</dt><dd>{{ view.snapshot.metrics.tool_call_count ?? 0 }}</dd></div>
           <div><dt>有效证据</dt><dd>{{ view.snapshot.metrics.evidence_count ?? 0 }}</dd></div>
           <div><dt>任务覆盖</dt><dd>{{ Math.round((view.snapshot.metrics.evidence_coverage ?? 0) * 100) }}%</dd></div>

@@ -9,8 +9,7 @@ const nodes = [
   ['planner', 'Planner', '规划'],
   ['researcher', 'Researcher', '调查'],
   ['tools', 'Tools', '检索'],
-  ['observe', 'Observer', '取证'],
-  ['checker', 'Checker', '审查'],
+  ['assessor', 'Assessor', '取证与审查'],
   ['writer', 'Writer', '写作'],
 ]
 

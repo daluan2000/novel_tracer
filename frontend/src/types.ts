@@ -97,6 +97,18 @@ export interface RunMetrics {
   termination_reason?: string | null
   structured_retry_count?: number
   content_fallback_count?: number
+  model_call_count?: number
+  token_usage?: {
+    input_tokens: number
+    output_tokens: number
+    total_tokens: number
+    reasoning_tokens: number
+    cached_tokens: number
+    elapsed_seconds: number
+    reported_call_count: number
+    unknown_call_count: number
+    by_node: Record<string, Record<string, number>>
+  }
 }
 
 export interface RunSnapshot {

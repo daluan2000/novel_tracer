@@ -13,7 +13,7 @@ from novel_agent.repository import NovelCorpus
 from novel_agent.state import initial_state
 from novel_agent.structured_output import StructuredOutputError
 from novel_agent.tools import build_tools
-from novel_agent.tracing import TraceWriter
+from novel_agent.tracing import TraceWriter, add_model_usage, empty_token_usage
 
 
 @dataclass(frozen=True)
@@ -63,11 +63,15 @@ def execute_agent(
     current_state: dict[str, Any] = dict(initial_state(question, max_steps))
     retry_count = 0
     fallback_count = 0
+    model_call_count = 0
+    token_usage = empty_token_usage()
 
     def state_with_diagnostics(state: dict[str, Any]) -> dict[str, Any]:
         enriched = dict(state)
         enriched["structured_retry_count"] = retry_count
         enriched["content_fallback_count"] = fallback_count
+        enriched["model_call_count"] = model_call_count
+        enriched["token_usage"] = token_usage
         return enriched
 
     def handle_diagnostic(diagnostic: dict[str, Any]) -> None:
@@ -82,12 +86,21 @@ def execute_agent(
         if on_diagnostic is not None:
             on_diagnostic(dict(diagnostic), dict(current_state))
 
+    def handle_model_usage(usage: dict[str, Any]) -> None:
+        nonlocal model_call_count, token_usage, current_state
+        model_call_count += 1
+        token_usage = add_model_usage(token_usage, usage)
+        current_state = state_with_diagnostics(current_state)
+        if trace is not None:
+            trace.append("model_usage", usage)
+
     graph = build_agent_graph(
         model=active_model,
         tools=build_tools(corpus),
         corpus=corpus,
         structured_retries=structured_retries,
         on_diagnostic=handle_diagnostic,
+        on_model_usage=handle_model_usage,
     )
 
     if should_cancel and should_cancel():

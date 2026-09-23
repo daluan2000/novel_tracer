@@ -53,8 +53,8 @@ def _structured_failure_executor(_corpus, question: str, **kwargs: Any) -> Agent
     state["current_task_id"] = "T1"
     kwargs["on_update"]("planner", {"plan": state["plan"]}, state)
     diagnostic = {
-        "source_node": "observe",
-        "schema": "ObservationOutput",
+        "source_node": "assessor",
+        "schema": "AssessmentOutput",
         "diagnostic_code": "structured_output_retry",
         "attempt": 1,
         "max_attempts": 3,
@@ -65,8 +65,8 @@ def _structured_failure_executor(_corpus, question: str, **kwargs: Any) -> Agent
     state["structured_retry_count"] = 1
     kwargs["on_diagnostic"](diagnostic, state)
     error = StructuredOutputError(
-        source_node="observe",
-        schema_name="ObservationOutput",
+        source_node="assessor",
+        schema_name="AssessmentOutput",
         attempts=3,
         failure_reason="missing_tool_call",
     )
@@ -197,10 +197,10 @@ def test_structured_failure_keeps_partial_state_and_safe_diagnostics() -> None:
         if event["detail"].get("diagnostic_code") == "structured_output_retry"
     )
     failure = events[-1]
-    assert retry["node"] == "observe"
+    assert retry["node"] == "assessor"
     assert retry["detail"]["retry_number"] == 1
     assert failure["type"] == "error"
-    assert failure["node"] == "observe"
+    assert failure["node"] == "assessor"
     assert failure["detail"]["code"] == "structured_output_failed"
     assert failure["detail"]["retryable"] is True
     assert failure["snapshot"]["plan"][0]["description"] == "已有计划"

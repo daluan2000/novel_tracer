@@ -8,7 +8,7 @@ function event(detail: RunEvent['detail']): RunEvent {
     timestamp: '2026-09-23T00:00:00Z',
     type: 'status',
     status: 'running',
-    node: 'observe',
+    node: 'assessor',
     detail,
     snapshot: {},
     error: null,

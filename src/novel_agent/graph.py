@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import time
 from typing import Any, Literal
 
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -12,37 +13,33 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 
-from novel_agent.models import (
-    FinalAnswer,
-    ObservationOutput,
-    PlanOutput,
-    ReplanOutput,
-    ReviewResult,
-)
+from novel_agent.config import structured_output_retries as configured_structured_retries
+from novel_agent.models import AssessmentOutput, FinalAnswer, PlanOutput, ReplanOutput
 from novel_agent.prompts import (
-    CHECKER_PROMPT,
-    OBSERVER_PROMPT,
+    ASSESSOR_PROMPT,
     PLANNER_PROMPT,
     REPLANNER_PROMPT,
     RESEARCHER_PROMPT,
     WRITER_PROMPT,
 )
-from novel_agent.config import structured_output_retries as configured_structured_retries
 from novel_agent.repository import NovelCorpus
 from novel_agent.state import AgentState
 from novel_agent.structured_output import DiagnosticCallback, invoke_structured
+from novel_agent.tracing import ModelUsageCallback, model_usage_event
+
+MAX_UNRESOLVED_QUESTIONS = 8
+MAX_SUGGESTED_QUERIES = 5
+MAX_HYPOTHESES = 8
+MAX_RESEARCH_EVIDENCE = 6
 
 
 def _json(data: Any) -> str:
-    return json.dumps(data, ensure_ascii=False, indent=2, default=str)
+    return json.dumps(data, ensure_ascii=False, separators=(",", ":"), default=str)
 
 
 def _current_task(state: AgentState) -> dict[str, Any] | None:
     task_id = state.get("current_task_id")
-    for task in state.get("plan", []):
-        if task.get("task_id") == task_id:
-            return task
-    return None
+    return next((task for task in state.get("plan", []) if task.get("task_id") == task_id), None)
 
 
 def _first_pending_task_id(plan: list[dict[str, Any]]) -> str | None:
@@ -63,25 +60,70 @@ def _normalized_quote(value: str) -> str:
     return re.sub(r"\s+", "", value).strip("，。；：、,.!！?？\"'“”‘’")
 
 
-def _research_history(messages: list[Any]) -> list[Any]:
-    """Keep the user question and the latest complete AI/tool exchange.
+def _bounded_unique(values: list[str], limit: int) -> list[str]:
+    unique = list(dict.fromkeys(value.strip() for value in values if value and value.strip()))
+    return unique[-limit:]
 
-    Cutting a message list by count can leave a ToolMessage without its preceding
-    AIMessage(tool_calls=...), which OpenAI-compatible APIs reject.
-    """
+
+def _research_history(messages: list[Any]) -> list[Any]:
+    """Keep only the original question; processed ToolMessages must not be replayed."""
+
     first_human = next((message for message in messages if isinstance(message, HumanMessage)), None)
-    last_call_index = -1
+    return [first_human] if first_human is not None else []
+
+
+def _evidence_summary(
+    evidence: list[dict[str, Any]],
+    *,
+    limit: int | None = None,
+    include_quote: bool = False,
+) -> list[dict[str, Any]]:
+    selected = evidence[-limit:] if limit is not None else evidence
+    keys = ["evidence_id", "task_id", "claim", "chunk_id", "supports"]
+    if include_quote:
+        keys.extend(["quote", "section_title", "start_line", "end_line", "interpretation"])
+    return [{key: item.get(key) for key in keys} for item in selected]
+
+
+def _hypothesis_summary(hypotheses: list[dict[str, Any]], limit: int = MAX_HYPOTHESES) -> list[dict[str, Any]]:
+    keys = ["hypothesis_id", "statement", "confidence", "status"]
+    return [{key: item.get(key) for key in keys} for item in hypotheses[-limit:]]
+
+
+def _latest_tool_exchange(messages: list[Any]) -> tuple[int, list[ToolMessage]]:
     for index in range(len(messages) - 1, -1, -1):
         message = messages[index]
-        if isinstance(message, AIMessage) and message.tool_calls:
-            last_call_index = index
-            break
-    if last_call_index < 0:
-        return [first_human] if first_human is not None else []
-    recent = list(messages[last_call_index:])
-    if first_human is not None and first_human not in recent:
-        return [first_human, *recent]
-    return recent
+        if isinstance(message, AIMessage):
+            if not message.tool_calls:
+                return -1, []
+            return index, [
+                candidate
+                for candidate in messages[index + 1 :]
+                if isinstance(candidate, ToolMessage)
+            ]
+    return -1, []
+
+
+def _tool_result(content: Any) -> Any:
+    if not isinstance(content, str):
+        return content
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        return content
+
+
+_COMPLEX_QUESTION_MARKERS = (
+    "分析", "为什么", "为何", "如何体现", "变化", "成长", "关系", "动机", "原因",
+    "意义", "象征", "主题", "对比", "评价", "解读", "发展", "矛盾", "影响", "阶段",
+)
+
+
+def is_simple_question(question: str) -> bool:
+    normalized = re.sub(r"\s+", "", question)
+    return len(normalized) <= 60 and not any(
+        marker in normalized for marker in _COMPLEX_QUESTION_MARKERS
+    )
 
 
 class AgentNodes:
@@ -93,6 +135,7 @@ class AgentNodes:
         *,
         structured_retries: int | None = None,
         on_diagnostic: DiagnosticCallback | None = None,
+        on_model_usage: ModelUsageCallback | None = None,
     ):
         self.model = model
         self.corpus = corpus
@@ -102,22 +145,16 @@ class AgentNodes:
             else structured_retries
         )
         self.on_diagnostic = on_diagnostic
+        self.on_model_usage = on_model_usage
         self.research_model = model.bind_tools(tools)
-        # Function-calling mode works with more OpenAI-compatible providers than
-        # provider-native JSON schema mode while still giving Pydantic validation.
         structured_options = {"method": "function_calling", "include_raw": True}
         self.plan_model = model.with_structured_output(PlanOutput, **structured_options)
-        self.observe_model = model.with_structured_output(ObservationOutput, **structured_options)
-        self.review_model = model.with_structured_output(ReviewResult, **structured_options)
+        self.assess_model = model.with_structured_output(AssessmentOutput, **structured_options)
         self.replan_model = model.with_structured_output(ReplanOutput, **structured_options)
         self.writer_model = model.with_structured_output(FinalAnswer, **structured_options)
 
     def _invoke_structured(
-        self,
-        runnable: Any,
-        messages: list[Any],
-        schema: type[Any],
-        source_node: str,
+        self, runnable: Any, messages: list[Any], schema: type[Any], source_node: str
     ) -> Any:
         return invoke_structured(
             runnable,
@@ -126,29 +163,36 @@ class AgentNodes:
             source_node=source_node,
             retries=self.structured_retries,
             on_diagnostic=self.on_diagnostic,
+            on_model_usage=self.on_model_usage,
         ).value
 
     def planner(self, state: AgentState) -> dict[str, Any]:
+        if is_simple_question(state["question"]):
+            return {
+                "question_mode": "simple",
+                "plan": [{
+                    "task_id": "T1",
+                    "description": "查找能够直接回答问题的原文",
+                    "status": "in_progress",
+                }],
+                "current_task_id": "T1",
+            }
+
         output = self._invoke_structured(
             self.plan_model,
-            [
-                SystemMessage(content=PLANNER_PROMPT),
-                ("human", state["question"]),
-            ],
+            [SystemMessage(content=PLANNER_PROMPT), HumanMessage(content=state["question"])],
             PlanOutput,
             "planner",
         )
-        tasks = [task.model_dump() for task in output.tasks[:5]]
+        tasks = [task.model_dump() for task in output.tasks[:3]]
         if not tasks:
-            tasks = [
-                {
-                    "task_id": "T1",
-                    "description": "查找与问题直接相关的原文",
-                    "status": "pending",
-                }
-            ]
+            tasks = [{
+                "task_id": "T1",
+                "description": "查找与问题直接相关的原文",
+                "status": "pending",
+            }]
         tasks[0]["status"] = "in_progress"
-        return {"plan": tasks, "current_task_id": tasks[0]["task_id"]}
+        return {"question_mode": "complex", "plan": tasks, "current_task_id": tasks[0]["task_id"]}
 
     def researcher(self, state: AgentState) -> dict[str, Any]:
         if state["step_count"] >= state["max_steps"]:
@@ -158,28 +202,34 @@ class AgentNodes:
             }
 
         context = {
-            "question": state["question"],
             "current_task": _current_task(state),
-            "plan": state["plan"],
-            "verified_evidence": [
-                {
-                    "evidence_id": item.get("evidence_id"),
-                    "task_id": item.get("task_id"),
-                    "claim": item.get("claim"),
-                    "chunk_id": item.get("chunk_id"),
-                    "supports": item.get("supports"),
-                }
-                for item in state["evidence"][-20:]
+            "plan_status": [
+                {"task_id": task.get("task_id"), "status": task.get("status")}
+                for task in state["plan"]
             ],
-            "unresolved_questions": state["unresolved_questions"],
-            "suggested_queries": state["suggested_queries"],
+            "verified_evidence": _evidence_summary(state["evidence"], limit=MAX_RESEARCH_EVIDENCE),
+            "unresolved_questions": state["unresolved_questions"][-MAX_UNRESOLVED_QUESTIONS:],
+            "suggested_queries": state["suggested_queries"][-MAX_SUGGESTED_QUERIES:],
             "remaining_steps": state["max_steps"] - state["step_count"],
-            "recent_tool_calls": state["tool_call_history"][-5:],
+            "recent_tool_calls": [
+                {
+                    "tool": item.get("tool"),
+                    "args": item.get("args", {}),
+                    "fingerprint": item.get("fingerprint"),
+                    "ok": item.get("ok"),
+                }
+                for item in state["tool_call_history"][-3:]
+            ],
         }
-        recent_messages = _research_history(state["messages"])
-        response = self.research_model.invoke(
-            [SystemMessage(content=RESEARCHER_PROMPT + "\n\n当前状态：\n" + _json(context)), *recent_messages]
-        )
+        messages = [
+            SystemMessage(content=RESEARCHER_PROMPT),
+            *_research_history(state["messages"]),
+            HumanMessage(content="当前状态：\n" + _json(context)),
+        ]
+        started = time.perf_counter()
+        response = self.research_model.invoke(messages)
+        if self.on_model_usage is not None:
+            self.on_model_usage(model_usage_event(response, "researcher", time.perf_counter() - started))
         if not isinstance(response, AIMessage):
             response = AIMessage(content=str(response))
         if len(response.tool_calls) > 2:
@@ -195,36 +245,29 @@ class AgentNodes:
             }
         return {"messages": [response], "step_count": state["step_count"] + 1}
 
-    def observe(self, state: AgentState) -> dict[str, Any]:
-        last_call_index = -1
-        for index in range(len(state["messages"]) - 1, -1, -1):
-            message = state["messages"][index]
-            if isinstance(message, AIMessage) and message.tool_calls:
-                last_call_index = index
-                break
-        tool_messages = [
-            message
-            for message in state["messages"][last_call_index + 1 :]
-            if isinstance(message, ToolMessage)
-        ]
-        if not tool_messages:
-            return {}
-        current_task = _current_task(state)
+    def assessor(self, state: AgentState) -> dict[str, Any]:
+        last_call_index, tool_messages = _latest_tool_exchange(state["messages"])
         prompt_data = {
-            "question": state["question"],
-            "current_task": current_task,
-            "existing_evidence": state["evidence"][-20:],
-            "existing_hypotheses": state["hypotheses"],
+            "current_task": _current_task(state),
+            "plan": state["plan"],
+            "existing_evidence": _evidence_summary(state["evidence"]),
+            "existing_hypotheses": _hypothesis_summary(state["hypotheses"]),
+            "unresolved_questions": state["unresolved_questions"][-MAX_UNRESOLVED_QUESTIONS:],
             "tool_results": [
-                {"tool_name": message.name, "tool_result": message.content}
+                {"tool_name": message.name, "tool_result": _tool_result(message.content)}
                 for message in tool_messages
             ],
+            "steps": {"used": state["step_count"], "maximum": state["max_steps"]},
         }
         output = self._invoke_structured(
-            self.observe_model,
-            [SystemMessage(content=OBSERVER_PROMPT), ("human", _json(prompt_data))],
-            ObservationOutput,
-            "observe",
+            self.assess_model,
+            [
+                SystemMessage(content=ASSESSOR_PROMPT),
+                HumanMessage(content=state["question"]),
+                HumanMessage(content="当前状态与当轮工具结果：\n" + _json(prompt_data)),
+            ],
+            AssessmentOutput,
+            "assessor",
         )
 
         existing_ids = {item["evidence_id"] for item in state["evidence"]}
@@ -238,7 +281,7 @@ class AgentNodes:
         current_task_id = state.get("current_task_id") or "unassigned"
         current_count = sum(item.get("task_id") == current_task_id for item in evidence)
         remaining_capacity = max(0, state["max_evidence_per_task"] - current_count)
-        for item in output.evidence:
+        for item in output.evidence[:3]:
             if remaining_capacity <= 0:
                 break
             if item.evidence_id in existing_ids:
@@ -263,6 +306,9 @@ class AgentNodes:
         hypothesis_by_id = {item["hypothesis_id"]: item for item in state["hypotheses"]}
         for hypothesis in output.hypotheses:
             hypothesis_by_id[hypothesis.hypothesis_id] = hypothesis.model_dump()
+        hypotheses = list(hypothesis_by_id.values())
+        hypotheses.sort(key=lambda item: item.get("status") not in {"active", "revised"})
+        hypotheses = hypotheses[:MAX_HYPOTHESES]
 
         history = list(state["tool_call_history"])
         calls_by_id: dict[str, dict[str, Any]] = {}
@@ -277,67 +323,44 @@ class AgentNodes:
                 if matching_call
                 else f"{tool_message.name}:unknown"
             )
-            history.append(
-                {
-                    "tool": tool_message.name,
-                    "args": matching_call.get("args", {}),
-                    "fingerprint": fingerprint,
-                    "result_summary": str(tool_message.content)[:400],
-                    "rejected_evidence_ids": rejected_quotes,
-                }
-            )
-        unresolved = list(dict.fromkeys([*state["unresolved_questions"], *output.unresolved_questions]))
-        task_attempts = dict(state["task_attempts"])
-        task_attempts[current_task_id] = task_attempts.get(current_task_id, 0) + 1
-        return {
-            "evidence": evidence,
-            "hypotheses": list(hypothesis_by_id.values()),
-            "unresolved_questions": unresolved,
-            "tool_call_history": history,
-            "task_attempts": task_attempts,
-        }
+            content = str(tool_message.content)
+            parsed_result = _tool_result(tool_message.content)
+            history.append({
+                "tool": tool_message.name,
+                "args": matching_call.get("args", {}),
+                "fingerprint": fingerprint,
+                "ok": not (isinstance(parsed_result, dict) and "error" in parsed_result),
+                "result_size_chars": len(content),
+                "rejected_evidence_ids": rejected_quotes,
+            })
 
-    def checker(self, state: AgentState) -> dict[str, Any]:
-        prompt_data = {
-            "question": state["question"],
-            "plan": state["plan"],
-            "current_task_id": state["current_task_id"],
-            "evidence": state["evidence"],
-            "hypotheses": state["hypotheses"],
-            "unresolved_questions": state["unresolved_questions"],
-            "steps": {"used": state["step_count"], "maximum": state["max_steps"]},
-        }
-        output = self._invoke_structured(
-            self.review_model,
-            [SystemMessage(content=CHECKER_PROMPT), ("human", _json(prompt_data))],
-            ReviewResult,
-            "checker",
+        unresolved = _bounded_unique(
+            [*state["unresolved_questions"], *output.unresolved_questions],
+            MAX_UNRESOLVED_QUESTIONS,
         )
+        suggested_queries = _bounded_unique(output.suggested_queries, MAX_SUGGESTED_QUERIES)
+        task_attempts = dict(state["task_attempts"])
+        if tool_messages:
+            task_attempts[current_task_id] = task_attempts.get(current_task_id, 0) + 1
+
         plan = [dict(task) for task in state["plan"]]
         completed = set(output.completed_task_ids)
+        evidence_task_ids = {item.get("task_id") for item in evidence}
         for task in plan:
-            if task["task_id"] in completed:
+            if task["task_id"] in completed and task["task_id"] in evidence_task_ids:
                 task["status"] = "completed"
 
-        current_task_id = state.get("current_task_id")
-        current_task = next(
-            (task for task in plan if task.get("task_id") == current_task_id), None
-        )
+        current_task = next((task for task in plan if task.get("task_id") == current_task_id), None)
         if (
             current_task is not None
             and current_task.get("status") == "in_progress"
-            and state["task_attempts"].get(str(current_task_id), 0) >= state["max_task_attempts"]
+            and task_attempts.get(str(current_task_id), 0) >= state["max_task_attempts"]
         ):
-            has_evidence = any(
-                item.get("task_id") == current_task_id for item in state["evidence"]
-            )
-            current_task["status"] = "completed" if has_evidence else "blocked"
+            current_task["status"] = "completed" if current_task_id in evidence_task_ids else "blocked"
 
         next_task_id = output.next_task_id
         available_ids = {
-            task["task_id"]
-            for task in plan
-            if task.get("status") in {"pending", "in_progress"}
+            task["task_id"] for task in plan if task.get("status") in {"pending", "in_progress"}
         }
         if next_task_id not in available_ids:
             next_task_id = _first_pending_task_id(plan)
@@ -345,12 +368,22 @@ class AgentNodes:
             if task["task_id"] == next_task_id and task["status"] == "pending":
                 task["status"] = "in_progress"
 
-        all_tasks_resolved = all(
+        all_tasks_resolved = bool(plan) and all(
             task.get("status") in {"completed", "blocked"} for task in plan
         )
         effective_sufficient = output.sufficient and all_tasks_resolved
-        review = output.model_dump()
-        review["sufficient"] = effective_sufficient
+        review = {
+            "sufficient": effective_sufficient,
+            "missing_information": output.missing_information[:MAX_UNRESOLVED_QUESTIONS],
+            "contradictions": output.contradictions[:MAX_UNRESOLVED_QUESTIONS],
+            "suggested_queries": suggested_queries,
+            "should_replan": output.should_replan,
+            "completed_task_ids": output.completed_task_ids,
+            "next_task_id": next_task_id,
+            "rationale": output.rationale,
+            "decision_summary": output.decision_summary,
+            "all_tasks_resolved": all_tasks_resolved,
+        }
         if output.sufficient and not all_tasks_resolved:
             review["rationale"] = (
                 output.rationale + "；仍有未完成计划任务，因此继续调查。"
@@ -361,29 +394,46 @@ class AgentNodes:
             termination = "evidence_sufficient"
         elif state["step_count"] >= state["max_steps"]:
             termination = "max_steps_reached"
+        elif all_tasks_resolved and (
+            state["question_mode"] == "simple"
+            or not output.should_replan
+            or state["replan_count"] >= state["max_replans"]
+        ):
+            termination = "tasks_resolved"
+
         return {
             "plan": plan,
             "current_task_id": next_task_id,
-            "suggested_queries": output.suggested_queries,
+            "task_attempts": task_attempts,
+            "evidence": evidence,
+            "hypotheses": hypotheses,
+            "unresolved_questions": unresolved,
+            "suggested_queries": suggested_queries,
+            "tool_call_history": history,
             "review": review,
             "termination_reason": termination,
         }
 
     def replanner(self, state: AgentState) -> dict[str, Any]:
         prompt_data = {
-            "question": state["question"],
             "plan": state["plan"],
-            "evidence": state["evidence"],
-            "hypotheses": state["hypotheses"],
-            "review": state["review"],
+            "evidence_summary": _evidence_summary(state["evidence"]),
+            "review": {
+                key: (state["review"] or {}).get(key)
+                for key in ("missing_information", "contradictions", "suggested_queries", "rationale")
+            },
         }
         output = self._invoke_structured(
             self.replan_model,
-            [SystemMessage(content=REPLANNER_PROMPT), ("human", _json(prompt_data))],
+            [
+                SystemMessage(content=REPLANNER_PROMPT),
+                HumanMessage(content=state["question"]),
+                HumanMessage(content="当前调查摘要：\n" + _json(prompt_data)),
+            ],
             ReplanOutput,
             "replanner",
         )
-        tasks = [task.model_dump() for task in output.tasks[:6]]
+        tasks = [task.model_dump() for task in output.tasks[:3]]
         previous_status = {task["task_id"]: task["status"] for task in state["plan"]}
         for task in tasks:
             if previous_status.get(task["task_id"]) in {"completed", "blocked"}:
@@ -401,40 +451,52 @@ class AgentNodes:
         }
 
     def writer(self, state: AgentState) -> dict[str, Any]:
+        review = state["review"] or {}
         prompt_data = {
-            "question": state["question"],
-            "plan": state["plan"],
-            "evidence": state["evidence"],
-            "hypotheses": state["hypotheses"],
-            "review": state["review"],
+            "evidence": _evidence_summary(state["evidence"], include_quote=True),
+            "relevant_hypotheses": _hypothesis_summary(state["hypotheses"], limit=5),
+            "missing_information": review.get("missing_information", []),
+            "contradictions": review.get("contradictions", []),
             "termination_reason": state["termination_reason"],
         }
         output = self._invoke_structured(
             self.writer_model,
-            [SystemMessage(content=WRITER_PROMPT), ("human", _json(prompt_data))],
+            [
+                SystemMessage(content=WRITER_PROMPT),
+                HumanMessage(content=state["question"]),
+                HumanMessage(content="已验证材料：\n" + _json(prompt_data)),
+            ],
             FinalAnswer,
             "writer",
         )
         return {"final_answer": output.answer, "limitations": output.limitations}
 
 
-def route_after_researcher(state: AgentState) -> Literal["tools", "checker"]:
+def route_after_researcher(state: AgentState) -> Literal["tools", "assessor"]:
     if state.get("termination_reason") in {"max_steps_reached", "repeated_tool_call"}:
-        return "checker"
+        return "assessor"
     last_message = state["messages"][-1]
-    return "tools" if isinstance(last_message, AIMessage) and last_message.tool_calls else "checker"
+    return "tools" if isinstance(last_message, AIMessage) and last_message.tool_calls else "assessor"
 
 
-def route_after_checker(state: AgentState) -> Literal["researcher", "replanner", "writer"]:
+def route_after_assessor(state: AgentState) -> Literal["researcher", "replanner", "writer"]:
     review = state.get("review") or {}
+    can_replan = (
+        review.get("should_replan")
+        and state.get("question_mode") == "complex"
+        and state["replan_count"] < state["max_replans"]
+        and state["step_count"] < state["max_steps"]
+    )
+    if can_replan:
+        return "replanner"
     if (
         review.get("sufficient")
+        or review.get("all_tasks_resolved")
         or state["step_count"] >= state["max_steps"]
-        or state.get("termination_reason") in {"max_steps_reached", "repeated_tool_call"}
+        or state.get("termination_reason")
+        in {"max_steps_reached", "repeated_tool_call", "tasks_resolved"}
     ):
         return "writer"
-    if review.get("should_replan") and state["replan_count"] < state["max_replans"]:
-        return "replanner"
     return "researcher"
 
 
@@ -446,6 +508,7 @@ def build_agent_graph(
     checkpointer: InMemorySaver | None = None,
     structured_retries: int | None = None,
     on_diagnostic: DiagnosticCallback | None = None,
+    on_model_usage: ModelUsageCallback | None = None,
 ):
     nodes = AgentNodes(
         model=model,
@@ -453,22 +516,21 @@ def build_agent_graph(
         corpus=corpus,
         structured_retries=structured_retries,
         on_diagnostic=on_diagnostic,
+        on_model_usage=on_model_usage,
     )
     builder = StateGraph(AgentState)
     builder.add_node("planner", nodes.planner)
     builder.add_node("researcher", nodes.researcher)
     builder.add_node("tools", ToolNode(tools, handle_tool_errors=True))
-    builder.add_node("observe", nodes.observe)
-    builder.add_node("checker", nodes.checker)
+    builder.add_node("assessor", nodes.assessor)
     builder.add_node("replanner", nodes.replanner)
     builder.add_node("writer", nodes.writer)
 
     builder.add_edge(START, "planner")
     builder.add_edge("planner", "researcher")
     builder.add_conditional_edges("researcher", route_after_researcher)
-    builder.add_edge("tools", "observe")
-    builder.add_edge("observe", "checker")
-    builder.add_conditional_edges("checker", route_after_checker)
+    builder.add_edge("tools", "assessor")
+    builder.add_conditional_edges("assessor", route_after_assessor)
     builder.add_edge("replanner", "researcher")
     builder.add_edge("writer", END)
     return builder.compile(checkpointer=checkpointer or InMemorySaver())

@@ -76,8 +76,8 @@ class NovelCorpus:
 
             positions = [haystack.find(term) for term in matched if haystack.find(term) >= 0]
             position = min(positions) if positions else 0
-            snippet_start = max(0, position - 120)
-            snippet_end = min(len(chunk.text), position + max(len(term) for term in matched) + 220)
+            snippet_start = max(0, position - 80)
+            snippet_end = min(len(chunk.text), position + max(len(term) for term in matched) + 140)
             snippet = chunk.text[snippet_start:snippet_end].strip()
             hits.append(
                 SearchHit(

@@ -9,6 +9,8 @@ from typing import Any, Callable, Generic, Sequence, TypeVar
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, ValidationError
 
+from novel_agent.tracing import ModelUsageCallback, model_usage_event
+
 ModelT = TypeVar("ModelT", bound=BaseModel)
 DiagnosticCallback = Callable[[dict[str, Any]], None]
 
@@ -94,6 +96,7 @@ def invoke_structured(
     source_node: str,
     retries: int,
     on_diagnostic: DiagnosticCallback | None = None,
+    on_model_usage: ModelUsageCallback | None = None,
     sleeper: Callable[[float], None] = time.sleep,
 ) -> StructuredResult[ModelT]:
     """Invoke a structured runnable with safe parsing diagnostics and bounded retries.
@@ -108,7 +111,10 @@ def invoke_structured(
     last_reason = "invalid_structured_output"
 
     for attempt in range(1, max_attempts + 1):
+        started = time.perf_counter()
         response = runnable.invoke(invocation_messages)
+        if on_model_usage is not None:
+            on_model_usage(model_usage_event(response, source_node, time.perf_counter() - started))
         raw = None
         parsing_error = None
         parsed = response

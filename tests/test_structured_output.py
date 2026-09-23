@@ -39,7 +39,7 @@ def invoke(runnable: SequenceRunnable, **kwargs: Any):
         runnable,
         [HumanMessage(content="question")],
         ExampleOutput,
-        source_node="observe",
+        source_node="assessor",
         sleeper=lambda _: None,
         **kwargs,
     )

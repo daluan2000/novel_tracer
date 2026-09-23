@@ -29,8 +29,7 @@ NODE_LABELS = {
     "planner": "制定调查计划",
     "researcher": "选择检索动作",
     "tools": "读取小说原文",
-    "observe": "校验并整理证据",
-    "checker": "检查证据缺口",
+    "assessor": "整理并审查证据",
     "replanner": "调整调查计划",
     "writer": "生成最终解读",
 }
@@ -75,9 +74,8 @@ def _event_detail(node: str, update: dict[str, Any], snapshot: dict[str, Any]) -
             for message in update.get("messages") or []
             if getattr(message, "name", None)
         ]
-    elif node == "observe":
+    elif node == "assessor":
         detail["evidence_count"] = len(snapshot["evidence"])
-    elif node == "checker":
         review = snapshot.get("review") or {}
         detail["sufficient"] = review.get("sufficient")
         detail["rationale"] = review.get("rationale", "")

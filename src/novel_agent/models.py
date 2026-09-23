@@ -120,14 +120,11 @@ class PlanOutput(BaseModel):
     tasks: list[InvestigationTask]
 
 
-class ObservationOutput(BaseModel):
+class AssessmentOutput(BaseModel):
     evidence: list[Evidence] = Field(default_factory=list)
     hypotheses: list[Hypothesis] = Field(default_factory=list)
     unresolved_questions: list[str] = Field(default_factory=list)
     decision_summary: str = ""
-
-
-class ReviewResult(BaseModel):
     sufficient: bool
     missing_information: list[str] = Field(default_factory=list)
     contradictions: list[str] = Field(default_factory=list)

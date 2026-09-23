@@ -44,7 +44,7 @@ describe('run event reducer', () => {
   it('moves the active graph node when a retry diagnostic arrives', () => {
     const retry = applyRunEvent(emptyRunView(), event({
       type: 'status',
-      node: 'observe',
+      node: 'assessor',
       detail: {
         diagnostic_code: 'structured_output_retry',
         retry_number: 1,
@@ -53,7 +53,7 @@ describe('run event reducer', () => {
     }))
 
     expect(retry.status).toBe('running')
-    expect(retry.activeNode).toBe('observe')
+    expect(retry.activeNode).toBe('assessor')
     expect(retry.events).toHaveLength(1)
   })
 })

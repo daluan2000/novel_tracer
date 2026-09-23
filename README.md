@@ -16,11 +16,11 @@
 - 标题识别不可靠时自动按段落和长度降级切分。
 - 所有 Chunk 保留行号和字符偏移，可定位回原文。
 - 四个只读工具：结构查看、关键词搜索、上下文读取、Section 读取。
-- LangGraph 长链路：Planner、Researcher、ToolNode、Observer、Evidence Checker、Replanner、Writer。
+- LangGraph 链路：Planner（简单题使用本地单任务计划）、Researcher、ToolNode、Assessor、Replanner、Writer。
 - 最大调查步数、重复工具调用保护、结构化工具错误。
 - 每轮最多 2 个工具、每项任务最多 2 个调查轮次和 6 条证据、最多 2 次 Replan。
 - 原文引文精确校验，模型无法把不存在的引文写入证据状态。
-- JSONL 执行轨迹和基础过程指标。
+- JSONL 执行轨迹，以及按节点汇总的输入、输出、思考与缓存 token 指标。
 - 批量问题评测入口。
 
 ## Agent 图
@@ -29,11 +29,10 @@
 flowchart TD
     A[Planner] --> B[Researcher]
     B -->|tool_calls| C[ToolNode]
-    B -->|不再调用工具| E[Evidence Checker]
-    C --> D[Observer / Quote Validation]
-    D --> E
+    B -->|不再调用工具| E[Assessor / Quote Validation]
+    C --> E
     E -->|证据不足| B
-    E -->|需要重规划| F[Replanner]
+    E -->|复杂问题需要重规划| F[Replanner]
     F --> B
     E -->|证据充分或预算耗尽| G[Writer]
     G --> H[END]
@@ -184,11 +183,10 @@ python -X utf8 -m novel_agent ask "大王绕命.txt" `
 终端的标准错误流会显示精简 Trace，例如：
 
 ```text
-[Trace] node=planner | task=T1 | plan=4
+[Trace] node=planner | task=T1 | plan=3
 [Trace] node=researcher | step=1 | tools=search_novel
 [Trace] node=tools
-[Trace] node=observe | evidence=1
-[Trace] node=checker | task=T2
+[Trace] node=assessor | task=T2 | evidence=1
 ```
 
 完整事件默认写入：
@@ -204,6 +202,7 @@ output/traces/<thread-id>.jsonl
 - 证据数量和任务覆盖率。
 - 是否找到反面证据。
 - Replan 次数。
+- 模型调用次数和按节点汇总的 token usage。
 - 最终终止原因。
 
 ### 4. 批量评测
@@ -223,10 +222,10 @@ python -X utf8 -m novel_agent evaluate "大王绕命.txt" `
 
 | 工具 | 作用 |
 |---|---|
-| `get_book_structure()` | 查看 Section、Chunk、标题识别策略和置信度 |
-| `search_novel(keyword, top_k)` | 搜索人名、地点、事件词或多个关键词 |
-| `read_context(chunk_id, before, after)` | 读取命中位置前后文，避免断章取义 |
-| `read_section(section_id, start_chunk, limit)` | 连续读取真实章节或合成 Section |
+| `get_book_structure(section_offset, section_limit)` | 查看结构总览；章节列表可选分页，每页最多 20 条 |
+| `search_novel(keyword, top_k)` | 搜索关键词，模型工具默认 3 条、最多 8 条 |
+| `read_context(chunk_id, before, after)` | 默认仅读取命中 Chunk，最多附带前后各 1 个 Chunk |
+| `read_section(section_id, start_chunk, limit)` | 默认读取 2 个 Chunk，最多 3 个 |
 
 工具只读取本地数据，不修改小说文件。
 
@@ -239,10 +238,11 @@ current_task_id       当前调查任务
 evidence              通过原文精确校验的证据
 hypotheses            可被修正或拒绝的解释假设
 unresolved_questions  尚未解决的问题
-tool_call_history     工具、参数、结果摘要和去重指纹
+tool_call_history     工具、参数、结果大小/状态和去重指纹
 review                最近一次证据审查结果
 step_count            已使用的调查步数
 termination_reason    结束原因
+token_usage           按节点汇总的 token 与模型耗时
 ```
 
 默认预算用于避免 Agent 在单个调查项上无限深挖：
@@ -277,9 +277,9 @@ npm run build
 - 正文编号列表误判保护。
 - 超长自然段切分。
 - 搜索、上下文读取和原文引文校验。
-- LangGraph 条件路由。
+- LangGraph 条件路由、Assessor 合并节点与简单问题快速路径。
 - 使用脚本模型执行完整工具循环。
-- DeepSeek 默认 Thinking mode 配置。
+- DeepSeek 默认 Thinking mode 配置和模型 usage 元数据汇总。
 
 测试 Fixture 在运行时动态生成，不包含小说原文。
 
@@ -314,4 +314,4 @@ frontend/                  Vue 3 + TypeScript 单页工作台
 - 简单过程指标不是答案质量的人工或 LLM Judge 评分。
 - 大模型的工具调用和结构化输出质量取决于具体供应商与模型。
 
-建议先观察纯 ReAct 轨迹，再依次研究显式计划、证据状态、Evidence Checker 和 Replan 对行为的影响，不要一开始增加多 Agent 或向量数据库。
+建议先观察纯 ReAct 轨迹，再依次研究显式计划、证据状态、Assessor 和 Replan 对行为的影响，不要一开始增加多 Agent 或向量数据库。

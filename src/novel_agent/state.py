@@ -9,6 +9,7 @@ from langgraph.graph.message import add_messages
 class AgentState(TypedDict):
     messages: Annotated[list[AnyMessage], add_messages]
     question: str
+    question_mode: str
     plan: list[dict[str, Any]]
     current_task_id: str | None
     task_attempts: dict[str, int]
@@ -29,12 +30,15 @@ class AgentState(TypedDict):
     limitations: list[str]
     structured_retry_count: int
     content_fallback_count: int
+    model_call_count: int
+    token_usage: dict[str, Any]
 
 
 def initial_state(question: str, max_steps: int) -> AgentState:
     return {
         "messages": [HumanMessage(content=question)],
         "question": question,
+        "question_mode": "unknown",
         "plan": [],
         "current_task_id": None,
         "task_attempts": {},
@@ -55,4 +59,6 @@ def initial_state(question: str, max_steps: int) -> AgentState:
         "limitations": [],
         "structured_retry_count": 0,
         "content_fallback_count": 0,
+        "model_call_count": 0,
+        "token_usage": {},
     }
