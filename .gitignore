@@ -30,8 +30,8 @@ Desktop.ini
 # Local source material and personal documents
 data/*.txt
 data/*.TXT
-/*.txt
-/*.TXT
+*.txt
+*.TXT
 !requirements.txt
 !requirements-dev.txt
 *.pdf
