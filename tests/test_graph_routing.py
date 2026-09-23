@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, ClassVar
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
@@ -22,6 +22,8 @@ from novel_agent.tools import build_tools
 
 
 class ScriptedChatModel(BaseChatModel):
+    structured_bindings: ClassVar[list[tuple[type[Any], dict[str, Any]]]] = []
+
     @property
     def _llm_type(self) -> str:
         return "scripted-test-model"
@@ -55,6 +57,7 @@ class ScriptedChatModel(BaseChatModel):
         return self
 
     def with_structured_output(self, schema: Any, **kwargs: Any) -> RunnableLambda:
+        self.structured_bindings.append((schema, kwargs))
         def produce(_: Any) -> Any:
             if schema is PlanOutput:
                 return PlanOutput(
@@ -71,6 +74,27 @@ class ScriptedChatModel(BaseChatModel):
             raise AssertionError(f"unexpected schema: {schema}")
 
         return RunnableLambda(produce)
+
+
+def test_all_structured_nodes_capture_raw_responses(tmp_path) -> None:
+    path = tmp_path / "sample.txt"
+    path.write_text("第一章 开始\n\n人物在这里出现。" * 20, encoding="utf-8")
+    corpus = NovelCorpus.from_path(path)
+    ScriptedChatModel.structured_bindings.clear()
+
+    AgentNodes(ScriptedChatModel(), build_tools(corpus), corpus, structured_retries=0)
+
+    assert {schema for schema, _ in ScriptedChatModel.structured_bindings} == {
+        PlanOutput,
+        ObservationOutput,
+        ReviewResult,
+        ReplanOutput,
+        FinalAnswer,
+    }
+    assert all(
+        options == {"method": "function_calling", "include_raw": True}
+        for _, options in ScriptedChatModel.structured_bindings
+    )
 
 
 def test_researcher_routes_to_tools_for_tool_call() -> None:

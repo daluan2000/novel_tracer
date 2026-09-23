@@ -61,4 +61,6 @@ def run_metrics(state: dict[str, Any]) -> dict[str, Any]:
         ),
         "step_count": state.get("step_count", 0),
         "termination_reason": state.get("termination_reason"),
+        "structured_retry_count": state.get("structured_retry_count", 0),
+        "content_fallback_count": state.get("content_fallback_count", 0),
     }

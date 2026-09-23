@@ -27,18 +27,14 @@ from novel_agent.prompts import (
     RESEARCHER_PROMPT,
     WRITER_PROMPT,
 )
+from novel_agent.config import structured_output_retries as configured_structured_retries
 from novel_agent.repository import NovelCorpus
 from novel_agent.state import AgentState
+from novel_agent.structured_output import DiagnosticCallback, invoke_structured
 
 
 def _json(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False, indent=2, default=str)
-
-
-def _as_model(value: Any, model_type: type[Any]) -> Any:
-    if isinstance(value, model_type):
-        return value
-    return model_type.model_validate(value)
 
 
 def _current_task(state: AgentState) -> dict[str, Any] | None:
@@ -89,27 +85,58 @@ def _research_history(messages: list[Any]) -> list[Any]:
 
 
 class AgentNodes:
-    def __init__(self, model: BaseChatModel, tools: list[BaseTool], corpus: NovelCorpus):
+    def __init__(
+        self,
+        model: BaseChatModel,
+        tools: list[BaseTool],
+        corpus: NovelCorpus,
+        *,
+        structured_retries: int | None = None,
+        on_diagnostic: DiagnosticCallback | None = None,
+    ):
         self.model = model
         self.corpus = corpus
+        self.structured_retries = (
+            configured_structured_retries()
+            if structured_retries is None
+            else structured_retries
+        )
+        self.on_diagnostic = on_diagnostic
         self.research_model = model.bind_tools(tools)
         # Function-calling mode works with more OpenAI-compatible providers than
         # provider-native JSON schema mode while still giving Pydantic validation.
-        self.plan_model = model.with_structured_output(PlanOutput, method="function_calling")
-        self.observe_model = model.with_structured_output(ObservationOutput, method="function_calling")
-        self.review_model = model.with_structured_output(ReviewResult, method="function_calling")
-        self.replan_model = model.with_structured_output(ReplanOutput, method="function_calling")
-        self.writer_model = model.with_structured_output(FinalAnswer, method="function_calling")
+        structured_options = {"method": "function_calling", "include_raw": True}
+        self.plan_model = model.with_structured_output(PlanOutput, **structured_options)
+        self.observe_model = model.with_structured_output(ObservationOutput, **structured_options)
+        self.review_model = model.with_structured_output(ReviewResult, **structured_options)
+        self.replan_model = model.with_structured_output(ReplanOutput, **structured_options)
+        self.writer_model = model.with_structured_output(FinalAnswer, **structured_options)
+
+    def _invoke_structured(
+        self,
+        runnable: Any,
+        messages: list[Any],
+        schema: type[Any],
+        source_node: str,
+    ) -> Any:
+        return invoke_structured(
+            runnable,
+            messages,
+            schema,
+            source_node=source_node,
+            retries=self.structured_retries,
+            on_diagnostic=self.on_diagnostic,
+        ).value
 
     def planner(self, state: AgentState) -> dict[str, Any]:
-        output = _as_model(
-            self.plan_model.invoke(
-                [
-                    SystemMessage(content=PLANNER_PROMPT),
-                    ("human", state["question"]),
-                ]
-            ),
+        output = self._invoke_structured(
+            self.plan_model,
+            [
+                SystemMessage(content=PLANNER_PROMPT),
+                ("human", state["question"]),
+            ],
             PlanOutput,
+            "planner",
         )
         tasks = [task.model_dump() for task in output.tasks[:5]]
         if not tasks:
@@ -193,11 +220,11 @@ class AgentNodes:
                 for message in tool_messages
             ],
         }
-        output = _as_model(
-            self.observe_model.invoke(
-                [SystemMessage(content=OBSERVER_PROMPT), ("human", _json(prompt_data))]
-            ),
+        output = self._invoke_structured(
+            self.observe_model,
+            [SystemMessage(content=OBSERVER_PROMPT), ("human", _json(prompt_data))],
             ObservationOutput,
+            "observe",
         )
 
         existing_ids = {item["evidence_id"] for item in state["evidence"]}
@@ -280,11 +307,11 @@ class AgentNodes:
             "unresolved_questions": state["unresolved_questions"],
             "steps": {"used": state["step_count"], "maximum": state["max_steps"]},
         }
-        output = _as_model(
-            self.review_model.invoke(
-                [SystemMessage(content=CHECKER_PROMPT), ("human", _json(prompt_data))]
-            ),
+        output = self._invoke_structured(
+            self.review_model,
+            [SystemMessage(content=CHECKER_PROMPT), ("human", _json(prompt_data))],
             ReviewResult,
+            "checker",
         )
         plan = [dict(task) for task in state["plan"]]
         completed = set(output.completed_task_ids)
@@ -350,11 +377,11 @@ class AgentNodes:
             "hypotheses": state["hypotheses"],
             "review": state["review"],
         }
-        output = _as_model(
-            self.replan_model.invoke(
-                [SystemMessage(content=REPLANNER_PROMPT), ("human", _json(prompt_data))]
-            ),
+        output = self._invoke_structured(
+            self.replan_model,
+            [SystemMessage(content=REPLANNER_PROMPT), ("human", _json(prompt_data))],
             ReplanOutput,
+            "replanner",
         )
         tasks = [task.model_dump() for task in output.tasks[:6]]
         previous_status = {task["task_id"]: task["status"] for task in state["plan"]}
@@ -382,11 +409,11 @@ class AgentNodes:
             "review": state["review"],
             "termination_reason": state["termination_reason"],
         }
-        output = _as_model(
-            self.writer_model.invoke(
-                [SystemMessage(content=WRITER_PROMPT), ("human", _json(prompt_data))]
-            ),
+        output = self._invoke_structured(
+            self.writer_model,
+            [SystemMessage(content=WRITER_PROMPT), ("human", _json(prompt_data))],
             FinalAnswer,
+            "writer",
         )
         return {"final_answer": output.answer, "limitations": output.limitations}
 
@@ -417,8 +444,16 @@ def build_agent_graph(
     corpus: NovelCorpus,
     *,
     checkpointer: InMemorySaver | None = None,
+    structured_retries: int | None = None,
+    on_diagnostic: DiagnosticCallback | None = None,
 ):
-    nodes = AgentNodes(model=model, tools=tools, corpus=corpus)
+    nodes = AgentNodes(
+        model=model,
+        tools=tools,
+        corpus=corpus,
+        structured_retries=structured_retries,
+        on_diagnostic=on_diagnostic,
+    )
     builder = StateGraph(AgentState)
     builder.add_node("planner", nodes.planner)
     builder.add_node("researcher", nodes.researcher)

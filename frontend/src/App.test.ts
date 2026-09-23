@@ -14,7 +14,8 @@ describe('App upload workflow', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(api.config).mockResolvedValue({
-      ready: true, model_name: 'test-model', default_max_steps: 16, error: null,
+      ready: true, model_name: 'test-model', default_max_steps: 16,
+      structured_output_retries: 2, error: null,
     })
     vi.mocked(api.sections).mockResolvedValue({ items: [], offset: 0, limit: 50, total: 0 })
     vi.mocked(api.uploadNovel).mockResolvedValue({

@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from novel_agent.service import AgentExecutionResult
 from novel_agent.state import initial_state
+from novel_agent.structured_output import StructuredOutputError
 from novel_agent.web import create_app
 
 
@@ -46,6 +47,33 @@ def _slow_executor(_corpus, question: str, **kwargs: Any) -> AgentExecutionResul
     return AgentExecutionResult(state=state, cancelled=kwargs["should_cancel"]())
 
 
+def _structured_failure_executor(_corpus, question: str, **kwargs: Any) -> AgentExecutionResult:
+    state = dict(initial_state(question, kwargs["max_steps"]))
+    state["plan"] = [{"task_id": "T1", "description": "已有计划", "status": "in_progress"}]
+    state["current_task_id"] = "T1"
+    kwargs["on_update"]("planner", {"plan": state["plan"]}, state)
+    diagnostic = {
+        "source_node": "observe",
+        "schema": "ObservationOutput",
+        "diagnostic_code": "structured_output_retry",
+        "attempt": 1,
+        "max_attempts": 3,
+        "retry_number": 1,
+        "max_retries": 2,
+        "failure_reason": "missing_tool_call",
+    }
+    state["structured_retry_count"] = 1
+    kwargs["on_diagnostic"](diagnostic, state)
+    error = StructuredOutputError(
+        source_node="observe",
+        schema_name="ObservationOutput",
+        attempts=3,
+        failure_reason="missing_tool_call",
+    )
+    error.state = state
+    raise error
+
+
 def _sse_events(body: str) -> list[dict[str, Any]]:
     return [
         json.loads(line.removeprefix("data: "))
@@ -63,7 +91,20 @@ def test_config_status_does_not_expose_api_key(monkeypatch) -> None:
     assert response.status_code == 200
     assert response.json()["ready"] is True
     assert response.json()["model_name"] == "test-model"
+    assert response.json()["structured_output_retries"] == 2
     assert "super-secret-key" not in response.text
+
+
+def test_config_status_rejects_invalid_structured_retry_setting(monkeypatch) -> None:
+    monkeypatch.setenv("NOVEL_AGENT_STRUCTURED_RETRIES", "6")
+
+    with TestClient(create_app()) as client:
+        response = client.get("/api/config")
+
+    assert response.status_code == 200
+    assert response.json()["ready"] is False
+    assert response.json()["structured_output_retries"] is None
+    assert "0 到 5" in response.json()["error"]
 
 
 def test_upload_structure_search_and_context() -> None:
@@ -139,3 +180,30 @@ def test_concurrent_run_is_rejected_and_cancel_is_terminal() -> None:
     assert second.status_code == 409
     assert cancelled.status_code == 202
     assert _sse_events(stream.text)[-1]["type"] == "cancelled"
+
+
+def test_structured_failure_keeps_partial_state_and_safe_diagnostics() -> None:
+    with TestClient(create_app(executor=_structured_failure_executor)) as client:
+        novel = _upload(client)
+        started = client.post(
+            "/api/runs",
+            json={"novel_id": novel["novel_id"], "question": "结构化失败测试", "max_steps": 5},
+        )
+        stream = client.get(f"/api/runs/{started.json()['run_id']}/events")
+
+    events = _sse_events(stream.text)
+    retry = next(
+        event for event in events
+        if event["detail"].get("diagnostic_code") == "structured_output_retry"
+    )
+    failure = events[-1]
+    assert retry["node"] == "observe"
+    assert retry["detail"]["retry_number"] == 1
+    assert failure["type"] == "error"
+    assert failure["node"] == "observe"
+    assert failure["detail"]["code"] == "structured_output_failed"
+    assert failure["detail"]["retryable"] is True
+    assert failure["snapshot"]["plan"][0]["description"] == "已有计划"
+    assert failure["snapshot"]["metrics"]["structured_retry_count"] == 1
+    assert "raw" not in stream.text
+    assert "结构化失败测试" not in stream.text

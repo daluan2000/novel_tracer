@@ -2,6 +2,7 @@ export interface ConfigStatus {
   ready: boolean
   model_name: string
   default_max_steps: number
+  structured_output_retries: number | null
   error: string | null
 }
 
@@ -94,6 +95,8 @@ export interface RunMetrics {
   resolved_task_count?: number
   step_count?: number
   termination_reason?: string | null
+  structured_retry_count?: number
+  content_fallback_count?: number
 }
 
 export interface RunSnapshot {
@@ -132,6 +135,15 @@ export interface RunEvent {
     rationale?: string
     replan_count?: number
     answer_ready?: boolean
+    diagnostic_code?: 'structured_output_retry' | 'content_json_fallback' | 'structured_output_failed'
+    schema?: string
+    attempt?: number
+    max_attempts?: number
+    retry_number?: number
+    max_retries?: number
+    failure_reason?: string
+    code?: string
+    retryable?: boolean
   }
   snapshot: RunSnapshot | Record<string, never>
   error: string | null

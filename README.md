@@ -93,6 +93,14 @@ MODEL_THINKING_MODE=disabled
 3. 足够长的上下文窗口。
 
 项目默认使用 function-calling 模式生成结构化输出，以兼容更多 OpenAI-compatible 服务。
+如果兼容服务偶发返回普通文本、空结果或不完整结构，程序会在同一节点内安全重试：
+
+```dotenv
+# 首次调用之外的额外尝试次数，允许 0-5，默认 2
+NOVEL_AGENT_STRUCTURED_RETRIES=2
+```
+
+合法的完整 JSON 文本会在通过目标 Pydantic Schema 校验后被接受；余额、认证、限流和网络异常不会进入这层格式重试。诊断只记录节点、Schema、次数和失败类别，不保存模型原始响应。
 
 ## 使用方法
 

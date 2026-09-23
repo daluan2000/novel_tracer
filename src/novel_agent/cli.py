@@ -79,6 +79,21 @@ def _compact_update(node: str, update: dict[str, Any]) -> str:
     return "[Trace] " + " | ".join(parts)
 
 
+def _compact_diagnostic(diagnostic: dict[str, Any]) -> str:
+    code = diagnostic.get("diagnostic_code")
+    node = diagnostic.get("source_node", "unknown")
+    schema = diagnostic.get("schema", "unknown")
+    if code == "structured_output_retry":
+        return (
+            f"[Retry] node={node} | schema={schema} | "
+            f"retry={diagnostic.get('retry_number')}/{diagnostic.get('max_retries')} | "
+            f"reason={diagnostic.get('failure_reason')}"
+        )
+    if code == "content_json_fallback":
+        return f"[Fallback] node={node} | schema={schema} | source=content_json"
+    return f"[StructuredOutputError] node={node} | schema={schema}"
+
+
 def run_agent(
     corpus: NovelCorpus,
     question: str,
@@ -95,6 +110,9 @@ def run_agent(
         trace_path=trace_path,
         on_update=lambda node, update, _state: print(
             _compact_update(node, update), file=sys.stderr
+        ),
+        on_diagnostic=lambda diagnostic, _state: print(
+            _compact_diagnostic(diagnostic), file=sys.stderr
         ),
     )
     return result.state

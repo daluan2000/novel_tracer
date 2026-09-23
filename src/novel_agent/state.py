@@ -27,6 +27,8 @@ class AgentState(TypedDict):
     termination_reason: str | None
     final_answer: str | None
     limitations: list[str]
+    structured_retry_count: int
+    content_fallback_count: int
 
 
 def initial_state(question: str, max_steps: int) -> AgentState:
@@ -51,4 +53,6 @@ def initial_state(question: str, max_steps: int) -> AgentState:
         "termination_reason": None,
         "final_answer": None,
         "limitations": [],
+        "structured_retry_count": 0,
+        "content_fallback_count": 0,
     }

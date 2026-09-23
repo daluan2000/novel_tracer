@@ -57,3 +57,15 @@ class ModelConfig:
 def default_max_steps() -> int:
     load_dotenv()
     return int(os.getenv("NOVEL_AGENT_MAX_STEPS", "16"))
+
+
+def structured_output_retries() -> int:
+    load_dotenv()
+    raw_value = os.getenv("NOVEL_AGENT_STRUCTURED_RETRIES", "2").strip()
+    try:
+        value = int(raw_value)
+    except ValueError as exc:
+        raise RuntimeError("NOVEL_AGENT_STRUCTURED_RETRIES 必须是 0 到 5 之间的整数。") from exc
+    if not 0 <= value <= 5:
+        raise RuntimeError("NOVEL_AGENT_STRUCTURED_RETRIES 必须是 0 到 5 之间的整数。")
+    return value

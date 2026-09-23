@@ -17,9 +17,10 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from novel_agent.config import ModelConfig, default_max_steps
+from novel_agent.config import ModelConfig, default_max_steps, structured_output_retries
 from novel_agent.repository import NovelCorpus
 from novel_agent.service import AgentExecutionResult, execute_agent, load_corpus
+from novel_agent.structured_output import StructuredOutputError
 from novel_agent.tracing import run_metrics
 
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
@@ -247,6 +248,25 @@ class RunManager:
                 snapshot=snapshot,
             )
 
+        def on_diagnostic(diagnostic: dict[str, Any], state: dict[str, Any]) -> None:
+            code = diagnostic.get("diagnostic_code")
+            source_node = str(diagnostic.get("source_node") or "unknown")
+            if code == "structured_output_retry":
+                label = (
+                    f"{NODE_LABELS.get(source_node, source_node)}结构化输出失败，"
+                    f"正在重试 {diagnostic.get('retry_number')}/{diagnostic.get('max_retries')}"
+                )
+            elif code == "content_json_fallback":
+                label = f"{NODE_LABELS.get(source_node, source_node)}已采用校验通过的文本 JSON"
+            else:
+                label = f"{NODE_LABELS.get(source_node, source_node)}结构化输出重试已耗尽"
+            record.emit(
+                "status",
+                node=source_node,
+                detail={"label": label, **diagnostic},
+                snapshot=_public_snapshot(state),
+            )
+
         try:
             kwargs: dict[str, Any] = {}
             if self.model_factory is not None:
@@ -258,6 +278,7 @@ class RunManager:
                 thread_id=record.run_id,
                 trace_path=Path("output/traces") / f"{record.run_id}.jsonl",
                 on_update=on_update,
+                on_diagnostic=on_diagnostic,
                 should_cancel=lambda: record.cancel_requested,
                 **kwargs,
             )
@@ -276,6 +297,24 @@ class RunManager:
                     detail={"label": "分析完成"},
                     snapshot=snapshot,
                 )
+        except StructuredOutputError as exc:
+            record.status = "failed"
+            snapshot = _public_snapshot(exc.state or {})
+            record.emit(
+                "error",
+                node=exc.source_node,
+                detail={
+                    "label": f"{NODE_LABELS.get(exc.source_node, exc.source_node)}结构化输出失败",
+                    "code": "structured_output_failed",
+                    "retryable": True,
+                    "schema": exc.schema_name,
+                    "attempt": exc.attempts,
+                    "max_attempts": exc.attempts,
+                    "failure_reason": exc.failure_reason,
+                },
+                snapshot=snapshot,
+                error="模型未按要求返回结构化结果，请重试或更换支持 Function Calling 的模型。",
+            )
         except Exception as exc:  # Worker errors are delivered through the event stream.
             record.status = "failed"
             record.emit(
@@ -349,11 +388,13 @@ def create_app(
     @app.get("/api/config")
     def config_status() -> dict[str, Any]:
         try:
+            retries = structured_output_retries()
             config = ModelConfig.from_env()
             return {
                 "ready": True,
                 "model_name": config.model_name,
                 "default_max_steps": min(max(default_max_steps(), 1), 100),
+                "structured_output_retries": retries,
                 "error": None,
             }
         except (RuntimeError, ValueError) as exc:
@@ -361,6 +402,7 @@ def create_app(
                 "ready": False,
                 "model_name": os.getenv("MODEL_NAME", "gpt-4.1-mini"),
                 "default_max_steps": min(max(default_max_steps(), 1), 100),
+                "structured_output_retries": None,
                 "error": str(exc),
             }
 

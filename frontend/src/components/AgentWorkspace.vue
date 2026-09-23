@@ -3,7 +3,8 @@ import MarkdownIt from 'markdown-it'
 import { computed, reactive, ref, watch } from 'vue'
 import { api } from '../api'
 import { useRun } from '../composables/useRun'
-import type { ConfigStatus, Evidence, NovelChunk, NovelInfo, RunEvent } from '../types'
+import { timelineText } from '../timeline'
+import type { ConfigStatus, Evidence, NovelChunk, NovelInfo } from '../types'
 import FlowGraph from './FlowGraph.vue'
 
 const props = defineProps<{ novel: NovelInfo; config: ConfigStatus | null }>()
@@ -44,15 +45,6 @@ async function begin() {
   } catch (cause) {
     localError.value = cause instanceof Error ? cause.message : '任务启动失败。'
   }
-}
-
-function timelineText(event: RunEvent) {
-  const detail = event.detail
-  if (detail.tool_calls?.length) return `准备调用 ${detail.tool_calls.map((call) => call.name).join('、')}`
-  if (detail.tools?.length) return `已执行 ${detail.tools.join('、')}`
-  if (detail.evidence_count !== undefined) return `当前已校验 ${detail.evidence_count} 条证据`
-  if (detail.rationale) return detail.rationale
-  return detail.label || event.type
 }
 
 async function toggleEvidence(evidence: Evidence) {
@@ -123,6 +115,8 @@ async function toggleEvidence(evidence: Evidence) {
           <div><dt>工具调用</dt><dd>{{ view.snapshot.metrics.tool_call_count ?? 0 }}</dd></div>
           <div><dt>有效证据</dt><dd>{{ view.snapshot.metrics.evidence_count ?? 0 }}</dd></div>
           <div><dt>任务覆盖</dt><dd>{{ Math.round((view.snapshot.metrics.evidence_coverage ?? 0) * 100) }}%</dd></div>
+          <div><dt>结构重试</dt><dd>{{ view.snapshot.metrics.structured_retry_count ?? 0 }}</dd></div>
+          <div><dt>JSON 兜底</dt><dd>{{ view.snapshot.metrics.content_fallback_count ?? 0 }}</dd></div>
         </dl>
       </aside>
     </div>
