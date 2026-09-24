@@ -89,12 +89,16 @@ class SearchHit(BaseModel):
 
 
 class InvestigationTask(BaseModel):
+    """Planner/Replanner 产出的一个可独立验证的调查任务。"""
+
     task_id: str
     description: str
     status: Literal["pending", "in_progress", "completed", "blocked"] = "pending"
 
 
 class Evidence(BaseModel):
+    """Assessor 提取的证据候选；graph.py 还会用原文再次校验 quote。"""
+
     evidence_id: str
     task_id: str
     claim: str
@@ -108,6 +112,8 @@ class Evidence(BaseModel):
 
 
 class Hypothesis(BaseModel):
+    """调查中的暂定解释，可随支持/反对证据增加而修订或否决。"""
+
     hypothesis_id: str
     statement: str
     confidence: float = Field(ge=0.0, le=1.0)
@@ -117,10 +123,14 @@ class Hypothesis(BaseModel):
 
 
 class PlanOutput(BaseModel):
+    """Planner 的强类型模型输出，避免从自然语言中猜测任务列表。"""
+
     tasks: list[InvestigationTask]
 
 
 class AssessmentOutput(BaseModel):
+    """Assessor 的完整决策：新增材料、缺口、任务进度和下一步建议。"""
+
     evidence: list[Evidence] = Field(default_factory=list)
     hypotheses: list[Hypothesis] = Field(default_factory=list)
     unresolved_questions: list[str] = Field(default_factory=list)
@@ -136,10 +146,14 @@ class AssessmentOutput(BaseModel):
 
 
 class ReplanOutput(BaseModel):
+    """Replanner 根据证据缺口生成的新计划。"""
+
     tasks: list[InvestigationTask]
     rationale: str
 
 
 class FinalAnswer(BaseModel):
+    """Writer 返回的用户答案，以及因材料不足产生的限制。"""
+
     answer: str
     limitations: list[str] = Field(default_factory=list)

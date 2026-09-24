@@ -1,3 +1,16 @@
+"""Agent 的核心状态图。
+
+主流程如下：
+
+    START -> planner -> researcher -> tools -> assessor
+                           ^                    |
+                           |                    +-> writer -> END
+                           +---- replanner <----+
+
+Researcher 也可以不调用工具而直接进入 Assessor。Assessor 是循环的决策中心：
+它验证证据、更新任务状态，然后决定继续调查、重新规划或开始写最终答案。
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -66,7 +79,11 @@ def _bounded_unique(values: list[str], limit: int) -> list[str]:
 
 
 def _research_history(messages: list[Any]) -> list[Any]:
-    """Keep only the original question; processed ToolMessages must not be replayed."""
+    """只保留原问题，避免把已经处理过的大段工具结果反复发给模型。
+
+    完整工具轨迹仍保存在 AgentState 中；Researcher 下一轮需要的信息会由
+    Assessor 压缩进 evidence、unresolved_questions 等结构化字段。
+    """
 
     first_human = next((message for message in messages if isinstance(message, HumanMessage)), None)
     return [first_human] if first_human is not None else []
@@ -127,6 +144,13 @@ def is_simple_question(question: str) -> bool:
 
 
 class AgentNodes:
+    """状态图中各节点的实现。
+
+    节点接收完整 AgentState，但只返回本轮发生变化的字段。Planner、Assessor、
+    Replanner 和 Writer 要求模型返回 Pydantic 结构；Researcher 则允许模型通过
+    tool_calls 自主选择检索工具。
+    """
+
     def __init__(
         self,
         model: BaseChatModel,
@@ -146,6 +170,9 @@ class AgentNodes:
         )
         self.on_diagnostic = on_diagnostic
         self.on_model_usage = on_model_usage
+
+        # 同一个基础模型绑定成五种角色。Researcher 绑定真实工具；其余角色绑定
+        # 输出 schema，使后续代码能按字段处理结果，而不必解析自然语言。
         self.research_model = model.bind_tools(tools)
         structured_options = {"method": "function_calling", "include_raw": True}
         self.plan_model = model.with_structured_output(PlanOutput, **structured_options)
@@ -167,6 +194,11 @@ class AgentNodes:
         ).value
 
     def planner(self, state: AgentState) -> dict[str, Any]:
+        """把用户问题拆成最多三个可调查任务，并激活第一个任务。
+
+        简单事实题不值得多调用一次模型，因此直接走本地生成的单任务计划。
+        """
+
         if is_simple_question(state["question"]):
             return {
                 "question_mode": "simple",
@@ -195,12 +227,17 @@ class AgentNodes:
         return {"question_mode": "complex", "plan": tasks, "current_task_id": tasks[0]["task_id"]}
 
     def researcher(self, state: AgentState) -> dict[str, Any]:
+        """根据当前任务和证据缺口，决定下一次要调用哪些小说检索工具。"""
+
+        # 在调用模型前先执行硬预算检查，保证调查循环一定能够结束。
         if state["step_count"] >= state["max_steps"]:
             return {
                 "messages": [AIMessage(content="已达到最大调查步数，进入证据审查。")],
                 "termination_reason": "max_steps_reached",
             }
 
+        # 只给模型最近且必要的摘要，控制上下文长度。原始工具结果已经由
+        # Assessor 消化，不会在下一轮 Researcher 中整段重放。
         context = {
             "current_task": _current_task(state),
             "plan_status": [
@@ -235,6 +272,8 @@ class AgentNodes:
         if len(response.tool_calls) > 2:
             response = response.model_copy(update={"tool_calls": response.tool_calls[:2]})
 
+        # 同一调用连续出现通常表示模型陷入循环。这里主动熔断，让 Assessor
+        # 使用已有证据收尾，而不是继续浪费步数。
         fingerprints = _tool_call_fingerprints(response)
         recent_fingerprints = [item.get("fingerprint") for item in state["tool_call_history"][-2:]]
         if fingerprints and all(recent_fingerprints.count(item) >= 2 for item in fingerprints):
@@ -246,6 +285,15 @@ class AgentNodes:
         return {"messages": [response], "step_count": state["step_count"] + 1}
 
     def assessor(self, state: AgentState) -> dict[str, Any]:
+        """审查本轮工具结果，并充当整个调查循环的决策中心。
+
+        该节点会：提取并校验证据、维护假设和任务状态、记录工具调用，最后
+        生成 review。路由函数根据 review 决定继续 Researcher、进入 Replanner，
+        或交给 Writer。
+        """
+
+        # 找到最近一次 AI tool_calls 及其对应的 ToolMessage。ToolNode 只负责
+        # 执行工具，工具结果的业务含义统一在这里解释。
         last_call_index, tool_messages = _latest_tool_exchange(state["messages"])
         prompt_data = {
             "current_task": _current_task(state),
@@ -270,6 +318,8 @@ class AgentNodes:
             "assessor",
         )
 
+        # 模型提出的“证据”不能直接相信：先去重，再确认 quote 的确逐字存在于
+        # 指定 chunk。只有通过校验的内容才能进入最终写作材料。
         existing_ids = {item["evidence_id"] for item in state["evidence"]}
         existing_quotes = {
             _normalized_quote(str(item.get("quote", "")))
@@ -303,6 +353,7 @@ class AgentNodes:
             existing_quotes.add(normalized_quote)
             remaining_capacity -= 1
 
+        # 假设允许随着新证据被 revised/rejected；相同 ID 会覆盖旧版本。
         hypothesis_by_id = {item["hypothesis_id"]: item for item in state["hypotheses"]}
         for hypothesis in output.hypotheses:
             hypothesis_by_id[hypothesis.hypothesis_id] = hypothesis.model_dump()
@@ -310,6 +361,7 @@ class AgentNodes:
         hypotheses.sort(key=lambda item: item.get("status") not in {"active", "revised"})
         hypotheses = hypotheses[:MAX_HYPOTHESES]
 
+        # 将 ToolMessage 与发起它的 tool_call 重新配对，供重复调用检测和 UI 展示。
         history = list(state["tool_call_history"])
         calls_by_id: dict[str, dict[str, Any]] = {}
         if last_call_index >= 0:
@@ -343,6 +395,8 @@ class AgentNodes:
         if tool_messages:
             task_attempts[current_task_id] = task_attempts.get(current_task_id, 0) + 1
 
+        # 任务只有在 Assessor 判定完成且至少拥有一条有效证据时才能 completed；
+        # 达到单任务尝试上限仍无证据时标为 blocked，避免卡死在一个任务上。
         plan = [dict(task) for task in state["plan"]]
         completed = set(output.completed_task_ids)
         evidence_task_ids = {item.get("task_id") for item in evidence}
@@ -368,6 +422,8 @@ class AgentNodes:
             if task["task_id"] == next_task_id and task["status"] == "pending":
                 task["status"] = "in_progress"
 
+        # “模型认为证据充分”还不够：计划中的每项任务也必须已经得到处理。
+        # 这是代码层的约束，用来防止模型过早结束调查。
         all_tasks_resolved = bool(plan) and all(
             task.get("status") in {"completed", "blocked"} for task in plan
         )
@@ -415,6 +471,8 @@ class AgentNodes:
         }
 
     def replanner(self, state: AgentState) -> dict[str, Any]:
+        """根据证据缺口重写后续计划，同时保留已完成/阻塞任务的状态。"""
+
         prompt_data = {
             "plan": state["plan"],
             "evidence_summary": _evidence_summary(state["evidence"]),
@@ -451,6 +509,8 @@ class AgentNodes:
         }
 
     def writer(self, state: AgentState) -> dict[str, Any]:
+        """只使用已经过校验的证据生成最终答案，并显式报告材料限制。"""
+
         review = state["review"] or {}
         prompt_data = {
             "evidence": _evidence_summary(state["evidence"], include_quote=True),
@@ -473,6 +533,8 @@ class AgentNodes:
 
 
 def route_after_researcher(state: AgentState) -> Literal["tools", "assessor"]:
+    """Researcher 发出了 tool_calls 就执行工具，否则直接审查现有材料。"""
+
     if state.get("termination_reason") in {"max_steps_reached", "repeated_tool_call"}:
         return "assessor"
     last_message = state["messages"][-1]
@@ -480,6 +542,8 @@ def route_after_researcher(state: AgentState) -> Literal["tools", "assessor"]:
 
 
 def route_after_assessor(state: AgentState) -> Literal["researcher", "replanner", "writer"]:
+    """按“可重规划 -> 可结束 -> 继续检索”的优先级选择下一节点。"""
+
     review = state.get("review") or {}
     can_replan = (
         review.get("should_replan")
@@ -510,6 +574,8 @@ def build_agent_graph(
     on_diagnostic: DiagnosticCallback | None = None,
     on_model_usage: ModelUsageCallback | None = None,
 ):
+    """组装并编译 LangGraph；checkpointer 让同一 thread_id 可读取最新状态。"""
+
     nodes = AgentNodes(
         model=model,
         tools=tools,
@@ -526,6 +592,7 @@ def build_agent_graph(
     builder.add_node("replanner", nodes.replanner)
     builder.add_node("writer", nodes.writer)
 
+    # 固定边描述主干，条件边描述 Agent 的循环和退出条件。
     builder.add_edge(START, "planner")
     builder.add_edge("planner", "researcher")
     builder.add_conditional_edges("researcher", route_after_researcher)
@@ -537,5 +604,7 @@ def build_agent_graph(
 
 
 def stable_thread_id(novel_path: str, question: str) -> str:
+    """为相同小说和问题生成可复现的短线程 ID（当前 Web/CLI 可另行传入 ID）。"""
+
     digest = hashlib.sha256(f"{novel_path}\n{question}".encode("utf-8")).hexdigest()
     return digest[:16]

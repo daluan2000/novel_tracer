@@ -13,6 +13,8 @@ def _json(data: object) -> str:
 
 
 def _safe_tool(operation: Callable[[], object]) -> str:
+    """把工具结果统一编码成 JSON，并将可预期的输入错误返回给模型自行修正。"""
+
     try:
         return _json(operation())
     except (KeyError, ValueError) as exc:
@@ -31,6 +33,12 @@ def _chunk_payload(chunk: object) -> dict[str, object]:
 
 
 def build_tools(corpus: NovelCorpus) -> list[StructuredTool]:
+    """构造 Researcher 可调用的四个只读工具。
+
+    工具按“看目录 -> 搜关键词 -> 读命中上下文/章节”的粒度设计。所有返回量
+    都有硬上限，避免一次工具调用把整本小说塞进模型上下文。
+    """
+
     def get_book_structure(section_offset: int = 0, section_limit: int = 0) -> str:
         """查看小说结构总览。默认不返回章节；需要目录时设置 section_limit，最多 20。"""
 

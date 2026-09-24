@@ -99,10 +99,11 @@ def invoke_structured(
     on_model_usage: ModelUsageCallback | None = None,
     sleeper: Callable[[float], None] = time.sleep,
 ) -> StructuredResult[ModelT]:
-    """Invoke a structured runnable with safe parsing diagnostics and bounded retries.
+    """调用结构化模型，并在有限次数内处理格式错误。
 
-    Provider/API exceptions deliberately escape immediately. Only completed responses
-    that cannot be converted to the requested schema are retried.
+    网络/供应商异常会立即向上抛出；只有“模型已经返回，但结果不符合 schema”
+    才会重试。如果模型把合法 JSON 放在普通文本而非 tool call 中，也允许进行
+    一次兼容性解析并记录 fallback 诊断。
     """
 
     max_attempts = retries + 1
@@ -123,6 +124,7 @@ def invoke_structured(
             parsed = response.get("parsed")
             parsing_error = response.get("parsing_error")
 
+        # 首选 with_structured_output 已解析出的对象。
         if parsed is not None:
             try:
                 value = _validate_parsed(parsed, schema)
@@ -130,6 +132,8 @@ def invoke_structured(
             except ValidationError:
                 parsing_error = parsing_error or ValidationError
 
+        # 某些兼容接口忽略 function_calling，转而在 content 中输出 JSON；这里
+        # 作为降级路径接受它，但会发出诊断，便于观察模型行为。
         tool_calls = getattr(raw, "tool_calls", None) or []
         text = _raw_text(raw)
         if not tool_calls and text is not None:
@@ -183,6 +187,8 @@ def invoke_structured(
             max_retries=retries,
             failure_reason=last_reason,
         )
+        # 指数退避后追加一条纠错消息；base_messages 保持不变，避免重复堆叠
+        # 多条失败提示。
         sleeper(min(0.5 * (2 ** (attempt - 1)), 4.0))
         invocation_messages = [
             *base_messages,

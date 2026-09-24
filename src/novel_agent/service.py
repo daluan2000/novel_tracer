@@ -52,9 +52,15 @@ def execute_agent(
     should_cancel: CancelCheck | None = None,
     structured_retries: int | None = None,
 ) -> AgentExecutionResult:
-    """Run the graph once and expose node-boundary updates to any presentation layer."""
+    """执行一次 Agent 图，并把节点级事件暴露给 CLI 或 Web 层。
+
+    这里是应用层入口：它创建模型与工具、初始化状态、消费 LangGraph 的流式
+    更新，并汇总诊断指标。具体的调查决策全部留在 graph.py 中。
+    """
 
     active_model = model or ModelConfig.from_env().create_model()
+    # thread_id 是 LangGraph checkpoint 的会话键；recursion_limit 是框架级保险，
+    # 真正的业务步数限制仍由 AgentState.max_steps 控制。
     config = {
         "configurable": {"thread_id": thread_id},
         "recursion_limit": max_steps * 5 + 20,
@@ -67,6 +73,8 @@ def execute_agent(
     token_usage = empty_token_usage()
 
     def state_with_diagnostics(state: dict[str, Any]) -> dict[str, Any]:
+        """把回调在图外统计的指标投影到对外可见状态。"""
+
         enriched = dict(state)
         enriched["structured_retry_count"] = retry_count
         enriched["content_fallback_count"] = fallback_count
@@ -94,6 +102,8 @@ def execute_agent(
         if trace is not None:
             trace.append("model_usage", usage)
 
+    # 每本小说都生成一组只访问该 corpus 的本地工具，模型不能越过这些工具
+    # 直接读取文件系统。
     graph = build_agent_graph(
         model=active_model,
         tools=build_tools(corpus),
@@ -107,6 +117,8 @@ def execute_agent(
         return AgentExecutionResult(state=current_state, cancelled=True)
 
     try:
+        # updates 模式每经过一个节点就产生一次 {node_name: changed_fields}。
+        # get_state 再从 checkpoint 取得合并后的完整状态，方便 UI 画时间线。
         for event in graph.stream(
             initial_state(question, max_steps),
             config=config,
@@ -118,9 +130,11 @@ def execute_agent(
                 current_state = state_with_diagnostics(dict(graph.get_state(config).values))
                 if on_update is not None:
                     on_update(node, update, current_state)
+                # 取消发生在节点边界；不会在一次正在进行的模型请求中强行中断。
                 if should_cancel and should_cancel():
                     return AgentExecutionResult(state=current_state, cancelled=True)
     except StructuredOutputError as exc:
+        # 把失败时的 checkpoint 附到异常上，Web 层仍能展示已经完成的步骤。
         checkpoint = dict(graph.get_state(config).values)
         current_state = state_with_diagnostics(checkpoint or current_state)
         exc.state = current_state
