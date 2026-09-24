@@ -104,6 +104,19 @@ def invoke_structured(
     网络/供应商异常会立即向上抛出；只有“模型已经返回，但结果不符合 schema”
     才会重试。如果模型把合法 JSON 放在普通文本而非 tool call 中，也允许进行
     一次兼容性解析并记录 fallback 诊断。
+
+    Args:
+        runnable: 已绑定结构化输出 schema、用于调用大模型的 Runnable。
+        messages: 发送给模型的消息序列，业务提示词应提前组装完成。
+        schema: 用于解析并校验模型输出的 Pydantic 模型类型。
+        source_node: 发起调用的图节点名称，用于诊断、统计和错误信息。
+        retries: 结构化结果无效时的重试次数，不包含首次调用。
+        on_diagnostic: 接收重试、降级或失败事件的可选回调。
+        on_model_usage: 接收模型耗时及 token 用量的可选回调。
+        sleeper: 重试退避时使用的等待函数，可在测试中替换。
+
+    Returns:
+        包含校验后对象、重试次数和降级解析次数的结构化结果。
     """
 
     max_attempts = retries + 1
