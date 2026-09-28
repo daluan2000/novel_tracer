@@ -129,6 +129,30 @@ novel-agent
 - 实时显示 Agent 节点图、调查计划、执行时间线、证据和最终答案。
 - 在当前模型调用结束后的节点边界安全停止任务。
 
+### 一键启动开发环境
+
+首次运行前，先安装 Python 依赖并在 `frontend` 目录执行一次 `npm install`。
+之后脚本会同时启动 8000 端口的后端和 5173 端口的前端；按 `Ctrl+C`
+会同时停止两个服务。
+
+Windows PowerShell：
+
+```powershell
+python .\start_dev.py
+```
+
+Linux：
+
+```bash
+python3 start_dev.py
+```
+
+只检查 Python、npm 和前端依赖是否就绪，不启动服务：
+
+```powershell
+python .\start_dev.py --check
+```
+
 开发前端时，可分别运行后端与 Vite；`/api` 会自动代理到 8000 端口：
 
 ```powershell
@@ -218,6 +242,7 @@ src/novel_agent/
 └── __main__.py            Web 工作台启动入口
 
 frontend/                  Vue 3 + TypeScript 单页工作台
+start_dev.py               跨平台的一键开发启动脚本
 tests/                     按上述职责镜像组织的后端测试
 ```
 
