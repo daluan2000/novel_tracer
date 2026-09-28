@@ -151,16 +151,18 @@ Thinking mode 仍使用现有 `MODEL_THINKING_MODE` 配置，没有为 Qwen 强�
 
 | 文件 | 变更 |
 | --- | --- |
-| `src/novel_agent/graph.py` | Assessor 合并节点、简单题快速路径、上下文投影、Prompt 分层和新路由 |
-| `src/novel_agent/models.py` | 新增统一 `AssessmentOutput` |
-| `src/novel_agent/prompts.py` | 合并取证/审查 Prompt，将计划任务数收紧为 1–3 |
-| `src/novel_agent/tools.py` | 工具限额、精简 DTO、紧凑 JSON 和结构分页 |
-| `src/novel_agent/repository.py` | 缩短搜索摘要 |
-| `src/novel_agent/tracing.py` | usage 规范化、累计和按节点汇总 |
-| `src/novel_agent/structured_output.py` | 对每次结构化调用记录 usage 和耗时 |
-| `src/novel_agent/service.py` | 将 usage 写入运行状态与 Trace |
-| `src/novel_agent/state.py` | 增加问题模式、模型调用数和 token usage |
-| `src/novel_agent/web.py` | Assessor 事件与公开指标 |
+| `src/novel_agent/agent/nodes.py` | Assessor 合并节点、简单题快速路径和 Prompt 分层 |
+| `src/novel_agent/agent/context.py` | 上下文投影和紧凑摘要 |
+| `src/novel_agent/agent/routing.py` | 调查循环的条件路由 |
+| `src/novel_agent/agent/schemas.py` | 新增统一 `AssessmentOutput` |
+| `src/novel_agent/agent/prompts.py` | 合并取证/审查 Prompt，将计划任务数收紧为 1–3 |
+| `src/novel_agent/agent/tools.py` | 工具限额、精简 DTO、紧凑 JSON 和结构分页 |
+| `src/novel_agent/corpus/repository.py` | 缩短搜索摘要 |
+| `src/novel_agent/runtime/tracing.py` | usage 规范化、累计和按节点汇总 |
+| `src/novel_agent/runtime/structured_output.py` | 对每次结构化调用记录 usage 和耗时 |
+| `src/novel_agent/application/service.py` | 将 usage 写入运行状态与 Trace |
+| `src/novel_agent/agent/state.py` | 增加问题模式、模型调用数和 token usage |
+| `src/novel_agent/web/events.py` | Assessor 事件与公开指标 |
 | `frontend/src` | 更新节点图、类型和 token 指标展示 |
 
 ## 测试与验证

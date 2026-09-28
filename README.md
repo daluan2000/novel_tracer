@@ -287,23 +287,17 @@ npm run build
 
 ```text
 src/novel_agent/
-├── chunker.py             段落感知切分与位置映射
-├── cli.py                 inspect/search/ask/evaluate
-├── config.py              模型配置
-├── graph.py               LangGraph 节点、路由和循环
-├── models.py              Pydantic 数据模型
-├── novel_loader.py        预处理入口
-├── prompts.py             节点职责 Prompt
-├── repository.py          本地小说查询与引用校验
-├── service.py             CLI/Web 共用的加载与 Agent 执行服务
-├── state.py               Agent 显式状态
-├── structure_detector.py  多策略标题识别和全局评分
-├── text_normalizer.py     编码与源文本加载
-├── tools.py               四个只读 Tool
-├── tracing.py             JSONL Trace 与运行指标
-└── web.py                 FastAPI、上传缓存、任务管理与 SSE
+├── agent/                 LangGraph 节点、状态、路由、Prompt、Schema 与 Tool
+├── application/           CLI/Web 共用的 Agent 执行服务
+├── corpus/                文本加载、结构识别、切分、模型与本地查询
+├── interfaces/            inspect/search/ask/evaluate 命令行接口
+├── runtime/               模型配置、结构化输出与运行诊断
+├── web/                   FastAPI、上传缓存、任务管理、事件映射与 SSE
+├── __init__.py            精简的公开 Python API
+└── __main__.py            python -m novel_agent 入口
 
 frontend/                  Vue 3 + TypeScript 单页工作台
+tests/                     按上述职责镜像组织的后端测试
 ```
 
 ## 已知边界

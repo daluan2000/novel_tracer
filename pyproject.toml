@@ -26,8 +26,8 @@ dev = [
 ]
 
 [project.scripts]
-novel-agent = "novel_agent.cli:main"
-novel-agent-web = "novel_agent.web:main"
+novel-agent = "novel_agent.interfaces.cli:main"
+novel-agent-web = "novel_agent.web.app:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

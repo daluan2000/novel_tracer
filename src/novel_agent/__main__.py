@@ -1,4 +1,4 @@
-from novel_agent.cli import main
+from novel_agent.interfaces.cli import main
 
 
 if __name__ == "__main__":
