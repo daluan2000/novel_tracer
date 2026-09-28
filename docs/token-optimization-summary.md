@@ -122,7 +122,6 @@ Researcher -> ToolNode -> Assessor -> Writer
 指标同时按节点汇总，并输出到：
 
 - Agent 最终状态。
-- CLI 运行指标。
 - Web 快照及指标面板。
 - JSONL Trace 中的独立 `model_usage` 事件。
 
@@ -151,16 +150,18 @@ Thinking mode 仍使用现有 `MODEL_THINKING_MODE` 配置，没有为 Qwen 强�
 
 | 文件 | 变更 |
 | --- | --- |
-| `src/novel_agent/graph.py` | Assessor 合并节点、简单题快速路径、上下文投影、Prompt 分层和新路由 |
-| `src/novel_agent/models.py` | 新增统一 `AssessmentOutput` |
-| `src/novel_agent/prompts.py` | 合并取证/审查 Prompt，将计划任务数收紧为 1–3 |
-| `src/novel_agent/tools.py` | 工具限额、精简 DTO、紧凑 JSON 和结构分页 |
-| `src/novel_agent/repository.py` | 缩短搜索摘要 |
-| `src/novel_agent/tracing.py` | usage 规范化、累计和按节点汇总 |
-| `src/novel_agent/structured_output.py` | 对每次结构化调用记录 usage 和耗时 |
-| `src/novel_agent/service.py` | 将 usage 写入运行状态与 Trace |
-| `src/novel_agent/state.py` | 增加问题模式、模型调用数和 token usage |
-| `src/novel_agent/web.py` | Assessor 事件与公开指标 |
+| `src/novel_agent/agent/nodes.py` | Assessor 合并节点、简单题快速路径和 Prompt 分层 |
+| `src/novel_agent/agent/context.py` | 上下文投影和紧凑摘要 |
+| `src/novel_agent/agent/routing.py` | 调查循环的条件路由 |
+| `src/novel_agent/agent/schemas.py` | 新增统一 `AssessmentOutput` |
+| `src/novel_agent/agent/prompts.py` | 合并取证/审查 Prompt，将计划任务数收紧为 1–3 |
+| `src/novel_agent/agent/tools.py` | 工具限额、精简 DTO、紧凑 JSON 和结构分页 |
+| `src/novel_agent/corpus/repository.py` | 缩短搜索摘要 |
+| `src/novel_agent/runtime/tracing.py` | usage 规范化、累计和按节点汇总 |
+| `src/novel_agent/runtime/structured_output.py` | 对每次结构化调用记录 usage 和耗时 |
+| `src/novel_agent/application/service.py` | 将 usage 写入运行状态与 Trace |
+| `src/novel_agent/agent/state.py` | 增加问题模式、模型调用数和 token usage |
+| `src/novel_agent/web/events.py` | Assessor 事件与公开指标 |
 | `frontend/src` | 更新节点图、类型和 token 指标展示 |
 
 ## 测试与验证
@@ -169,7 +170,7 @@ Thinking mode 仍使用现有 `MODEL_THINKING_MODE` 配置，没有为 Qwen 强�
 
 ```text
 pytest -q
-63 passed
+65 passed
 ```
 
 新增或更新的回归覆盖：
@@ -182,6 +183,7 @@ pytest -q
 - 工具 Chunk 上限和返回字段。
 - token usage 字段规范化、节点汇总和未知 usage 降级。
 - Web 运行事件和结构化输出失败处理。
+- Web 服务与根包启动入口。
 
 前端：
 
@@ -199,7 +201,7 @@ TypeScript 检查和 Vite 生产构建通过
 
 本次没有自动使用 `.env` 中的真实 API Key 运行付费模型基准，避免为了验证 token 优化反而额外消耗 token。
 
-下次真实问答完成后，可直接在 CLI 运行指标、Web 指标面板或 JSONL Trace 中查看：
+下次真实问答完成后，可直接在 Web 指标面板或 JSONL Trace 中查看：
 
 - 实际总 token。
 - 各节点 token 占比。

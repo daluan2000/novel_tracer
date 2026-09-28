@@ -21,7 +21,6 @@
 - 每轮最多 2 个工具、每项任务最多 2 个调查轮次和 6 条证据、最多 2 次 Replan。
 - 原文引文精确校验，模型无法把不存在的引文写入证据状态。
 - JSONL 执行轨迹，以及按节点汇总的输入、输出、思考与缓存 token 指标。
-- 批量问题评测入口。
 
 ## Agent 图
 
@@ -48,13 +47,12 @@ python --version
 python -m pip install -e .
 ```
 
-如果不希望 editable 安装，也可以安装依赖后设置 `PYTHONPATH=src`。在 Windows 上推荐始终使用：
+如果不希望 editable 安装，也可以安装依赖后设置 `PYTHONPATH=src`。
+安装后可使用 `novel-agent` 启动 Web 工作台；未安装脚本时使用：
 
 ```powershell
-python -X utf8 -m novel_agent --help
+python -m novel_agent
 ```
-
-`-X utf8` 可以避免 Conda/PowerShell 使用 GBK 回显中文时出现编码错误。
 
 ## 模型配置
 
@@ -118,8 +116,10 @@ Set-Location ..
 启动本机服务：
 
 ```powershell
-python -m novel_agent.web
+novel-agent
 ```
+
+也可以直接运行 `python -m novel_agent`。
 
 然后访问 <http://127.0.0.1:8000>。页面支持：
 
@@ -129,94 +129,40 @@ python -m novel_agent.web
 - 实时显示 Agent 节点图、调查计划、执行时间线、证据和最终答案。
 - 在当前模型调用结束后的节点边界安全停止任务。
 
+### 一键启动开发环境
+
+首次运行前，先安装 Python 依赖并在 `frontend` 目录执行一次 `npm install`。
+之后脚本会同时启动 8000 端口的后端和 5173 端口的前端；按 `Ctrl+C`
+会同时停止两个服务。
+
+Windows PowerShell：
+
+```powershell
+python .\start_dev.py
+```
+
+Linux：
+
+```bash
+python3 start_dev.py
+```
+
+只检查 Python、npm 和前端依赖是否就绪，不启动服务：
+
+```powershell
+python .\start_dev.py --check
+```
+
 开发前端时，可分别运行后端与 Vite；`/api` 会自动代理到 8000 端口：
 
 ```powershell
 # 终端 1
-python -m novel_agent.web
+python -m novel_agent
 
 # 终端 2
 Set-Location frontend
 npm run dev
 ```
-
-### 1. 检查小说结构
-
-该命令不调用模型：
-
-```powershell
-python -X utf8 -m novel_agent inspect "大王绕命.txt" --limit-sections 10
-```
-
-保存完整结构报告：
-
-```powershell
-python -X utf8 -m novel_agent inspect "大王绕命.txt" `
-  --output output/structure-report.json
-```
-
-重点关注输出中的：
-
-- `strategy`：标题识别、混合标题或降级切分。
-- `confidence`：结构识别置信度。
-- `detectors_used`：实际命中的标题识别器。
-- `warnings`：目录噪声过滤或降级原因。
-
-### 2. 测试本地检索
-
-该命令也不调用模型：
-
-```powershell
-python -X utf8 -m novel_agent search "大王绕命.txt" "吕树 吕小鱼" --top-k 5
-```
-
-搜索使用简单、透明的本地关键词排名，适合观察 Agent 如何改写搜索词。第一版没有使用向量数据库。
-
-### 3. 运行完整 Agent
-
-```powershell
-python -X utf8 -m novel_agent ask "大王绕命.txt" `
-  "分析吕树和吕小鱼关系的变化，给出关键阶段、原文依据和至少一项反面证据。" `
-  --max-steps 16
-```
-
-终端的标准错误流会显示精简 Trace，例如：
-
-```text
-[Trace] node=planner | task=T1 | plan=3
-[Trace] node=researcher | step=1 | tools=search_novel
-[Trace] node=tools
-[Trace] node=assessor | task=T2 | evidence=1
-```
-
-完整事件默认写入：
-
-```text
-output/traces/<thread-id>.jsonl
-```
-
-运行结果还会输出：
-
-- 工具调用次数。
-- 非重复工具调用比例。
-- 证据数量和任务覆盖率。
-- 是否找到反面证据。
-- Replan 次数。
-- 模型调用次数和按节点汇总的 token usage。
-- 最终终止原因。
-
-### 4. 批量评测
-
-先复制并修改示例问题，确保人物名和问题适合当前小说：
-
-```powershell
-python -X utf8 -m novel_agent evaluate "大王绕命.txt" `
-  examples/evaluation_questions.json `
-  --max-steps 16 `
-  --output-dir output/evaluation
-```
-
-评测结果写入 `output/evaluation/results.json`，每个问题有独立的 JSONL Trace。
 
 ## 工具
 
@@ -287,23 +233,17 @@ npm run build
 
 ```text
 src/novel_agent/
-├── chunker.py             段落感知切分与位置映射
-├── cli.py                 inspect/search/ask/evaluate
-├── config.py              模型配置
-├── graph.py               LangGraph 节点、路由和循环
-├── models.py              Pydantic 数据模型
-├── novel_loader.py        预处理入口
-├── prompts.py             节点职责 Prompt
-├── repository.py          本地小说查询与引用校验
-├── service.py             CLI/Web 共用的加载与 Agent 执行服务
-├── state.py               Agent 显式状态
-├── structure_detector.py  多策略标题识别和全局评分
-├── text_normalizer.py     编码与源文本加载
-├── tools.py               四个只读 Tool
-├── tracing.py             JSONL Trace 与运行指标
-└── web.py                 FastAPI、上传缓存、任务管理与 SSE
+├── agent/                 LangGraph 节点、状态、路由、Prompt、Schema 与 Tool
+├── application/           Web 共用的 Agent 执行服务
+├── corpus/                文本加载、结构识别、切分、模型与本地查询
+├── runtime/               模型配置、结构化输出与运行诊断
+├── web/                   FastAPI、上传缓存、任务管理、事件映射与 SSE
+├── __init__.py            精简的公开 Python API
+└── __main__.py            Web 工作台启动入口
 
 frontend/                  Vue 3 + TypeScript 单页工作台
+start_dev.py               跨平台的一键开发启动脚本
+tests/                     按上述职责镜像组织的后端测试
 ```
 
 ## 已知边界
