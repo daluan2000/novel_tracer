@@ -21,7 +21,6 @@
 - 每轮最多 2 个工具、每项任务最多 2 个调查轮次和 6 条证据、最多 2 次 Replan。
 - 原文引文精确校验，模型无法把不存在的引文写入证据状态。
 - JSONL 执行轨迹，以及按节点汇总的输入、输出、思考与缓存 token 指标。
-- 批量问题评测入口。
 
 ## Agent 图
 
@@ -48,13 +47,12 @@ python --version
 python -m pip install -e .
 ```
 
-如果不希望 editable 安装，也可以安装依赖后设置 `PYTHONPATH=src`。在 Windows 上推荐始终使用：
+如果不希望 editable 安装，也可以安装依赖后设置 `PYTHONPATH=src`。
+安装后可使用 `novel-agent` 启动 Web 工作台；未安装脚本时使用：
 
 ```powershell
-python -X utf8 -m novel_agent --help
+python -m novel_agent
 ```
-
-`-X utf8` 可以避免 Conda/PowerShell 使用 GBK 回显中文时出现编码错误。
 
 ## 模型配置
 
@@ -118,8 +116,10 @@ Set-Location ..
 启动本机服务：
 
 ```powershell
-python -m novel_agent.web
+novel-agent
 ```
+
+也可以直接运行 `python -m novel_agent`。
 
 然后访问 <http://127.0.0.1:8000>。页面支持：
 
@@ -133,90 +133,12 @@ python -m novel_agent.web
 
 ```powershell
 # 终端 1
-python -m novel_agent.web
+python -m novel_agent
 
 # 终端 2
 Set-Location frontend
 npm run dev
 ```
-
-### 1. 检查小说结构
-
-该命令不调用模型：
-
-```powershell
-python -X utf8 -m novel_agent inspect "大王绕命.txt" --limit-sections 10
-```
-
-保存完整结构报告：
-
-```powershell
-python -X utf8 -m novel_agent inspect "大王绕命.txt" `
-  --output output/structure-report.json
-```
-
-重点关注输出中的：
-
-- `strategy`：标题识别、混合标题或降级切分。
-- `confidence`：结构识别置信度。
-- `detectors_used`：实际命中的标题识别器。
-- `warnings`：目录噪声过滤或降级原因。
-
-### 2. 测试本地检索
-
-该命令也不调用模型：
-
-```powershell
-python -X utf8 -m novel_agent search "大王绕命.txt" "吕树 吕小鱼" --top-k 5
-```
-
-搜索使用简单、透明的本地关键词排名，适合观察 Agent 如何改写搜索词。第一版没有使用向量数据库。
-
-### 3. 运行完整 Agent
-
-```powershell
-python -X utf8 -m novel_agent ask "大王绕命.txt" `
-  "分析吕树和吕小鱼关系的变化，给出关键阶段、原文依据和至少一项反面证据。" `
-  --max-steps 16
-```
-
-终端的标准错误流会显示精简 Trace，例如：
-
-```text
-[Trace] node=planner | task=T1 | plan=3
-[Trace] node=researcher | step=1 | tools=search_novel
-[Trace] node=tools
-[Trace] node=assessor | task=T2 | evidence=1
-```
-
-完整事件默认写入：
-
-```text
-output/traces/<thread-id>.jsonl
-```
-
-运行结果还会输出：
-
-- 工具调用次数。
-- 非重复工具调用比例。
-- 证据数量和任务覆盖率。
-- 是否找到反面证据。
-- Replan 次数。
-- 模型调用次数和按节点汇总的 token usage。
-- 最终终止原因。
-
-### 4. 批量评测
-
-先复制并修改示例问题，确保人物名和问题适合当前小说：
-
-```powershell
-python -X utf8 -m novel_agent evaluate "大王绕命.txt" `
-  examples/evaluation_questions.json `
-  --max-steps 16 `
-  --output-dir output/evaluation
-```
-
-评测结果写入 `output/evaluation/results.json`，每个问题有独立的 JSONL Trace。
 
 ## 工具
 
@@ -288,13 +210,12 @@ npm run build
 ```text
 src/novel_agent/
 ├── agent/                 LangGraph 节点、状态、路由、Prompt、Schema 与 Tool
-├── application/           CLI/Web 共用的 Agent 执行服务
+├── application/           Web 共用的 Agent 执行服务
 ├── corpus/                文本加载、结构识别、切分、模型与本地查询
-├── interfaces/            inspect/search/ask/evaluate 命令行接口
 ├── runtime/               模型配置、结构化输出与运行诊断
 ├── web/                   FastAPI、上传缓存、任务管理、事件映射与 SSE
 ├── __init__.py            精简的公开 Python API
-└── __main__.py            python -m novel_agent 入口
+└── __main__.py            Web 工作台启动入口
 
 frontend/                  Vue 3 + TypeScript 单页工作台
 tests/                     按上述职责镜像组织的后端测试

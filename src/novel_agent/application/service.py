@@ -52,7 +52,7 @@ def execute_agent(
     should_cancel: CancelCheck | None = None,
     structured_retries: int | None = None,
 ) -> AgentExecutionResult:
-    """执行一次 Agent 图，并把节点级事件暴露给 CLI 或 Web 层。
+    """执行一次 Agent 图，并把节点级事件暴露给 Web 层。
 
     这里是应用层入口：它创建模型与工具、初始化状态、消费 LangGraph 的流式
     更新，并汇总诊断指标。具体的调查决策全部留在 agent 包中。

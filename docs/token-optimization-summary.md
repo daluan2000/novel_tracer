@@ -122,7 +122,6 @@ Researcher -> ToolNode -> Assessor -> Writer
 指标同时按节点汇总，并输出到：
 
 - Agent 最终状态。
-- CLI 运行指标。
 - Web 快照及指标面板。
 - JSONL Trace 中的独立 `model_usage` 事件。
 
@@ -171,7 +170,7 @@ Thinking mode 仍使用现有 `MODEL_THINKING_MODE` 配置，没有为 Qwen 强�
 
 ```text
 pytest -q
-63 passed
+65 passed
 ```
 
 新增或更新的回归覆盖：
@@ -184,6 +183,7 @@ pytest -q
 - 工具 Chunk 上限和返回字段。
 - token usage 字段规范化、节点汇总和未知 usage 降级。
 - Web 运行事件和结构化输出失败处理。
+- Web 服务与根包启动入口。
 
 前端：
 
@@ -201,7 +201,7 @@ TypeScript 检查和 Vite 生产构建通过
 
 本次没有自动使用 `.env` 中的真实 API Key 运行付费模型基准，避免为了验证 token 优化反而额外消耗 token。
 
-下次真实问答完成后，可直接在 CLI 运行指标、Web 指标面板或 JSONL Trace 中查看：
+下次真实问答完成后，可直接在 Web 指标面板或 JSONL Trace 中查看：
 
 - 实际总 token。
 - 各节点 token 占比。
