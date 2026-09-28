@@ -24,12 +24,13 @@ describe('timeline diagnostics', () => {
       max_retries: 2,
     }))
 
-    expect(text).toContain('正在重试 1/2')
+    expect(text).toContain('Assessor 返回格式不符合要求')
+    expect(text).toContain('第 1 次，共 2 次')
     expect(text).not.toContain('raw')
   })
 
   it('labels content JSON fallback', () => {
     expect(timelineText(event({ diagnostic_code: 'content_json_fallback' })))
-      .toContain('Schema 校验通过')
+      .toContain('已通过兼容方式解析')
   })
 })

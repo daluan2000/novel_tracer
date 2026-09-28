@@ -192,6 +192,7 @@ main { width: min(1240px, calc(100% - 48px)); margin: 0 auto; }
 .anomaly-list li.level-info { border-color: var(--green); background: var(--green-soft); }
 .anomaly-list li > div { display: flex; justify-content: space-between; gap: 10px; }
 .anomaly-list code { color: var(--ink); font: 10px 'DM Mono', monospace; }
+.anomaly-list li > div strong { color: var(--ink); font-size: 11px; }
 .anomaly-list time, .anomaly-list small { color: var(--muted); font: 9px 'DM Mono', monospace; }
 .anomaly-list p { margin: 6px 0 3px; font-size: 11px; line-height: 1.55; }
 .no-anomaly { margin: 16px 0 0; color: var(--muted); font-size: 11px; }

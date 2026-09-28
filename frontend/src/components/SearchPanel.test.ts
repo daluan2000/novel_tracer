@@ -56,7 +56,7 @@ describe('SearchPanel', () => {
 
     expect(api.search).toHaveBeenCalledWith('book-1', '人物', 5)
     expect(wrapper.text()).toContain('人物在这里。')
-    expect(wrapper.text()).toContain('Embedding 消耗与检索状态')
+    expect(wrapper.text()).toContain('语义检索用量与运行状态')
     expect(wrapper.text()).toContain('embedding_not_configured')
 
     await wrapper.find('.text-button').trigger('click')

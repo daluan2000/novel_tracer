@@ -76,11 +76,11 @@ describe('AgentWorkspace observability', () => {
     const wrapper = mount(AgentWorkspace, { props: { novel, config } })
     await flushPromises()
 
-    expect(wrapper.text()).toContain('模型 Token 消耗')
+    expect(wrapper.text()).toContain('模型用量')
     expect(wrapper.text()).toContain('1,234')
     expect(wrapper.text()).toContain('推理 Token')
     expect(wrapper.text()).toContain('structured_output_retry')
-    expect(wrapper.text()).toContain('Embedding 消耗与检索状态')
+    expect(wrapper.text()).toContain('语义检索用量与运行状态')
     expect(wrapper.text()).not.toContain('证据型解读')
   })
 })

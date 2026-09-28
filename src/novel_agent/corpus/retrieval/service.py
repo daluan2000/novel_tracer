@@ -169,7 +169,7 @@ class RetrievalService:
                 self._record_event(
                     level="warning",
                     code="embedding_not_configured",
-                    message="未配置 Embedding 模型或凭据，检索已使用 BM25。",
+                    message="未配置语义编码模型或访问凭据，已改用关键词检索。",
                     operation="index_build",
                     fallback="bm25",
                 )
@@ -195,7 +195,7 @@ class RetrievalService:
                 self._record_event(
                     level="error",
                     code="embedding_build_failed",
-                    message="向量索引构建失败，检索已降级为 BM25。",
+                    message="语义索引构建失败，已改用关键词检索。",
                     operation="index_build",
                     fallback="bm25",
                 )
@@ -285,7 +285,7 @@ class RetrievalService:
             self._record_event(
                 level="warning",
                 code="index_cache_corrupt",
-                message="Embedding 索引缓存无效，正在重新构建。",
+                message="语义索引缓存无效，正在重新构建。",
                 operation="index_build",
             )
         if matrix is None:
@@ -328,9 +328,9 @@ class RetrievalService:
                             else "embedding_document_request_failed"
                         ),
                         message=(
-                            f"Embedding 文档编码请求超时，已完成第 {_attempt + 1}/3 次尝试。"
+                            f"文本编码请求超时，已完成第 {_attempt + 1}/3 次尝试。"
                             if timed_out
-                            else f"Embedding 文档编码请求失败，已完成第 {_attempt + 1}/3 次尝试。"
+                            else f"文本编码请求失败，已完成第 {_attempt + 1}/3 次尝试。"
                         ),
                         operation="index_build",
                     )
@@ -419,7 +419,7 @@ class RetrievalService:
                 self._record_event(
                     level="error",
                     code="embedding_dimension_mismatch",
-                    message="查询向量维度与索引不一致，本次检索已降级为 BM25。",
+                    message="查询向量与语义索引的维度不一致，本次已改用关键词检索。",
                     operation="query",
                     fallback="bm25",
                 )
@@ -438,9 +438,9 @@ class RetrievalService:
                 level="error",
                 code="embedding_timeout" if timed_out else "embedding_query_failed",
                 message=(
-                    "查询向量生成超时，本次检索已降级为 BM25。"
+                    "查询文本编码超时，本次已改用关键词检索。"
                     if timed_out
-                    else "查询向量生成失败，本次检索已降级为 BM25。"
+                    else "查询文本编码失败，本次已改用关键词检索。"
                 ),
                 operation="query",
                 fallback="bm25",
@@ -482,13 +482,13 @@ class RetrievalService:
                 self._metrics["fallback_count"] += 1
             if status == "building":
                 code = "embedding_index_building"
-                message = "向量索引仍在构建，本次检索使用 BM25。"
+                message = "语义索引仍在构建，本次先使用关键词检索。"
             else:
                 code = "bm25_fallback"
                 message = (
-                    "Embedding 未配置，本次检索使用 BM25。"
+                    "语义编码模型未配置，本次使用关键词检索。"
                     if error_code == "embedding_not_configured"
-                    else "向量索引不可用，本次检索使用 BM25。"
+                    else "语义索引暂不可用，本次使用关键词检索。"
                 )
             self._record_event(
                 level="warning",
