@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from typing import Any
 
@@ -74,6 +75,10 @@ def _structured_failure_executor(_corpus, question: str, **kwargs: Any) -> Agent
     raise error
 
 
+def _timeout_executor(_corpus, _question: str, **_kwargs: Any) -> AgentExecutionResult:
+    raise TimeoutError("vendor response contains super-secret-key")
+
+
 def _sse_events(body: str) -> list[dict[str, Any]]:
     return [
         json.loads(line.removeprefix("data: "))
@@ -113,6 +118,7 @@ def test_upload_structure_search_and_context() -> None:
         novel_id = novel["novel_id"]
 
         sections = client.get(f"/api/novels/{novel_id}/sections", params={"limit": 1})
+        retrieval = client.get(f"/api/novels/{novel_id}/retrieval-status")
         search = client.get(
             f"/api/novels/{novel_id}/search",
             params={"q": "吕树 吕小鱼", "top_k": 3},
@@ -124,10 +130,55 @@ def test_upload_structure_search_and_context() -> None:
     assert novel["section_count"] >= 1
     assert sections.status_code == 200
     assert sections.json()["items"]
+    assert retrieval.status_code == 200
+    assert retrieval.json()["status"] == "degraded"
+    assert retrieval.json()["active_mode"] == "lexical"
+    assert retrieval.json()["error_code"] == "embedding_not_configured"
+    assert retrieval.json()["metrics"]["fallback_count"] == 1
+    assert retrieval.json()["events"][0]["code"] == "embedding_not_configured"
     assert search.status_code == 200
     assert {"吕树", "吕小鱼"}.issubset(search.json()[0]["matched_terms"])
     assert context.status_code == 200
     assert any("吕小鱼" in chunk["text"] for chunk in context.json())
+
+
+def test_upload_builds_dense_index_in_background(monkeypatch, tmp_path) -> None:
+    started = threading.Event()
+    release = threading.Event()
+
+    class BlockingEmbedding:
+        def embed_documents(self, texts: list[str]) -> list[list[float]]:
+            started.set()
+            assert release.wait(timeout=3)
+            return [[1.0, 0.0] for _text in texts]
+
+        def embed_query(self, _text: str) -> list[float]:
+            return [1.0, 0.0]
+
+    monkeypatch.setenv("EMBEDDING_MODEL", "fake-web-embedding")
+    monkeypatch.setenv("EMBEDDING_API_KEY", "fake-key")
+    monkeypatch.setattr(
+        "novel_agent.corpus.repository.create_embedding_provider",
+        lambda _config: BlockingEmbedding(),
+    )
+    app = create_app(executor=_success_executor)
+    app.state.novels.index_cache_root = tmp_path / "indexes"
+
+    with TestClient(app) as client:
+        novel = _upload(client)
+        status_url = f"/api/novels/{novel['novel_id']}/retrieval-status"
+        assert client.get(status_url).json()["status"] == "building"
+        assert started.wait(timeout=1)
+
+        release.set()
+        deadline = time.time() + 2
+        status = client.get(status_url).json()
+        while status["status"] == "building" and time.time() < deadline:
+            time.sleep(0.01)
+            status = client.get(status_url).json()
+
+        assert status["status"] == "hybrid_ready"
+        assert status["active_mode"] == "hybrid"
 
 
 def test_upload_validation_and_missing_novel() -> None:
@@ -142,11 +193,13 @@ def test_upload_validation_and_missing_novel() -> None:
             "/api/novels", files={"file": ("sample.txt", b"12345", "text/plain")}
         )
         missing = client.get("/api/novels/missing/sections")
+        missing_retrieval = client.get("/api/novels/missing/retrieval-status")
 
     assert wrong_type.status_code == 400
     assert empty.status_code == 400
     assert too_large.status_code == 400
     assert missing.status_code == 404
+    assert missing_retrieval.status_code == 404
 
 
 def test_run_stream_exposes_normalized_events_only() -> None:
@@ -207,3 +260,20 @@ def test_structured_failure_keeps_partial_state_and_safe_diagnostics() -> None:
     assert failure["snapshot"]["metrics"]["structured_retry_count"] == 1
     assert "raw" not in stream.text
     assert "结构化失败测试" not in stream.text
+
+
+def test_run_timeout_is_classified_without_exposing_provider_error() -> None:
+    with TestClient(create_app(executor=_timeout_executor)) as client:
+        novel = _upload(client)
+        started = client.post(
+            "/api/runs",
+            json={"novel_id": novel["novel_id"], "question": "超时测试", "max_steps": 5},
+        )
+        stream = client.get(f"/api/runs/{started.json()['run_id']}/events")
+
+    failure = _sse_events(stream.text)[-1]
+    assert failure["type"] == "error"
+    assert failure["detail"]["code"] == "model_timeout"
+    assert failure["detail"]["level"] == "error"
+    assert failure["detail"]["retryable"] is True
+    assert "super-secret-key" not in stream.text

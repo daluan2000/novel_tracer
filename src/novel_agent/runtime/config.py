@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import math
 from dataclasses import dataclass
 
 from dotenv import load_dotenv
@@ -14,6 +15,7 @@ class ModelConfig:
     base_url: str | None = None
     temperature: float = 0.0
     thinking_mode: str | None = None
+    request_timeout_seconds: float = 120.0
 
     @classmethod
     def from_env(cls) -> "ModelConfig":
@@ -37,6 +39,10 @@ class ModelConfig:
             base_url=os.getenv("OPENAI_BASE_URL", "").strip() or None,
             temperature=float(os.getenv("NOVEL_AGENT_TEMPERATURE", "0")),
             thinking_mode=thinking_mode,
+            request_timeout_seconds=_timeout_from_env(
+                "MODEL_REQUEST_TIMEOUT_SECONDS",
+                120.0,
+            ),
         )
 
     def create_model(self) -> ChatOpenAI:
@@ -51,7 +57,53 @@ class ModelConfig:
             model=self.model_name,
             temperature=self.temperature,
             extra_body=extra_body,
+            timeout=self.request_timeout_seconds,
         )
+
+
+@dataclass(frozen=True)
+class EmbeddingConfig:
+    """OpenAI-compatible embedding settings with chat credential fallbacks."""
+
+    model_name: str
+    api_key: str
+    base_url: str | None = None
+    request_timeout_seconds: float = 30.0
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.model_name and self.api_key)
+
+    @classmethod
+    def from_env(cls) -> "EmbeddingConfig":
+        load_dotenv()
+        return cls(
+            model_name=os.getenv("EMBEDDING_MODEL", "").strip(),
+            api_key=(
+                os.getenv("EMBEDDING_API_KEY", "").strip()
+                or os.getenv("OPENAI_API_KEY", "").strip()
+            ),
+            base_url=(
+                os.getenv("EMBEDDING_BASE_URL", "").strip()
+                or os.getenv("OPENAI_BASE_URL", "").strip()
+                or None
+            ),
+            request_timeout_seconds=_timeout_from_env(
+                "EMBEDDING_REQUEST_TIMEOUT_SECONDS",
+                30.0,
+            ),
+        )
+
+
+def _timeout_from_env(name: str, default: float) -> float:
+    raw_value = os.getenv(name, str(default)).strip()
+    try:
+        value = float(raw_value)
+    except ValueError as exc:
+        raise RuntimeError(f"{name} 必须是 5 到 600 之间的秒数。") from exc
+    if not math.isfinite(value) or not 5 <= value <= 600:
+        raise RuntimeError(f"{name} 必须是 5 到 600 之间的秒数。")
+    return value
 
 
 def default_max_steps() -> int:

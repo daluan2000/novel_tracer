@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from novel_agent.runtime.config import ModelConfig, structured_output_retries
+from novel_agent.runtime.config import EmbeddingConfig, ModelConfig, structured_output_retries
 
 
 def test_deepseek_defaults_to_disabled_thinking(monkeypatch) -> None:
@@ -23,6 +23,7 @@ def test_non_deepseek_does_not_send_thinking_parameter(monkeypatch) -> None:
     config = ModelConfig.from_env()
 
     assert config.thinking_mode is None
+    assert config.request_timeout_seconds == 120.0
 
 
 def test_invalid_thinking_mode_is_rejected(monkeypatch) -> None:
@@ -32,6 +33,26 @@ def test_invalid_thinking_mode_is_rejected(monkeypatch) -> None:
 
     with pytest.raises(RuntimeError, match="enabled、disabled"):
         ModelConfig.from_env()
+
+
+@pytest.mark.parametrize("value", ["4", "601", "forever", "nan"])
+def test_invalid_model_timeout_is_rejected(monkeypatch, value: str) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("MODEL_REQUEST_TIMEOUT_SECONDS", value)
+
+    with pytest.raises(RuntimeError, match="5 到 600"):
+        ModelConfig.from_env()
+
+
+def test_embedding_timeout_configuration(monkeypatch) -> None:
+    monkeypatch.setenv("EMBEDDING_MODEL", "test-embedding")
+    monkeypatch.setenv("EMBEDDING_API_KEY", "test-key")
+    monkeypatch.setenv("EMBEDDING_REQUEST_TIMEOUT_SECONDS", "45")
+
+    config = EmbeddingConfig.from_env()
+
+    assert config.enabled is True
+    assert config.request_timeout_seconds == 45.0
 
 
 def test_structured_retries_default_and_boundaries(monkeypatch) -> None:

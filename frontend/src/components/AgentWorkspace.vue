@@ -6,6 +6,7 @@ import { useRun } from '../composables/useRun'
 import { timelineText } from '../timeline'
 import type { ConfigStatus, Evidence, NovelChunk, NovelInfo } from '../types'
 import FlowGraph from './FlowGraph.vue'
+import RetrievalObservability from './RetrievalObservability.vue'
 
 const props = defineProps<{ novel: NovelInfo; config: ConfigStatus | null }>()
 const emit = defineEmits<{ 'running-change': [running: boolean] }>()
@@ -29,6 +30,55 @@ const progress = computed(() => {
   if (!snapshot?.max_steps) return 0
   return Math.min(100, Math.round((snapshot.step_count / snapshot.max_steps) * 100))
 })
+const tokenUsage = computed(() => view.snapshot?.metrics.token_usage)
+const tokenUsageByNode = computed(() => Object.entries(tokenUsage.value?.by_node ?? {}))
+const runAnomalies = computed(() => {
+  const items: Array<{ key: string; level: string; code: string; message: string; timestamp?: string }> = []
+  for (const event of view.events) {
+    const code = event.detail.code || event.detail.diagnostic_code
+    if (!code && event.type !== 'error') continue
+    items.push({
+      key: `event-${event.sequence}`,
+      level: event.detail.level || (event.type === 'error' ? 'error' : 'warning'),
+      code: code || 'run_error',
+      message: event.detail.label || event.error || '任务执行出现异常。',
+      timestamp: event.timestamp,
+    })
+  }
+  const snapshot = view.snapshot
+  if (snapshot?.termination_reason && ['max_steps_reached', 'repeated_tool_call'].includes(snapshot.termination_reason)
+      && !items.some((item) => item.code === snapshot.termination_reason)) {
+    items.push({
+      key: `termination-${snapshot.termination_reason}`,
+      level: 'warning',
+      code: snapshot.termination_reason,
+      message: snapshot.termination_reason === 'max_steps_reached'
+        ? '达到最大调查步数，结果可能不完整。'
+        : '检测到重复工具调用，调查已提前结束。',
+    })
+  }
+  for (const task of snapshot?.plan ?? []) {
+    if (task.status === 'blocked') items.push({
+      key: `blocked-${task.task_id}`, level: 'warning', code: 'task_blocked',
+      message: `${task.task_id} 无法继续：${task.description}`,
+    })
+  }
+  for (const [index, limitation] of (snapshot?.limitations ?? []).entries()) {
+    items.push({ key: `limitation-${index}`, level: 'warning', code: 'answer_limitation', message: limitation })
+  }
+  for (const [key, message] of [['local', localError.value], ['stream', view.error]] as const) {
+    if (message && !items.some((item) => item.message === message)) {
+      items.push({ key: `${key}-error`, level: 'error', code: `${key}_operation_failed`, message })
+    }
+  }
+  return items.reverse()
+})
+
+function formatTime(value?: string) {
+  if (!value) return ''
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleTimeString('zh-CN', { hour12: false })
+}
 
 async function begin() {
   localError.value = ''
@@ -102,25 +152,50 @@ async function toggleEvidence(evidence: Evidence) {
       </aside>
     </div>
 
-    <div v-if="view.snapshot?.final_answer" class="answer-layout">
+    <div v-if="view.snapshot || runAnomalies.length" class="observability-grid">
+      <section class="observability-card model-usage-card">
+        <div class="observability-heading"><div><p class="mini-title">模型 Token 消耗</p><small>数据随每个已完成的模型调用实时累计</small></div><span>{{ view.snapshot?.metrics.model_call_count ?? 0 }} calls</span></div>
+        <dl class="usage-grid">
+          <div><dt>输入 Token</dt><dd>{{ (tokenUsage?.input_tokens ?? 0).toLocaleString() }}</dd></div>
+          <div><dt>输出 Token</dt><dd>{{ (tokenUsage?.output_tokens ?? 0).toLocaleString() }}</dd></div>
+          <div><dt>推理 Token</dt><dd>{{ (tokenUsage?.reasoning_tokens ?? 0).toLocaleString() }}</dd></div>
+          <div><dt>缓存 Token</dt><dd>{{ (tokenUsage?.cached_tokens ?? 0).toLocaleString() }}</dd></div>
+          <div><dt>总 Token</dt><dd>{{ (tokenUsage?.total_tokens ?? 0).toLocaleString() }}</dd></div>
+          <div><dt>模型耗时</dt><dd>{{ (tokenUsage?.elapsed_seconds ?? 0).toFixed(2) }}s</dd></div>
+          <div><dt>已报告用量</dt><dd>{{ tokenUsage?.reported_call_count ?? 0 }}</dd></div>
+          <div><dt>未知用量</dt><dd>{{ tokenUsage?.unknown_call_count ?? 0 }}</dd></div>
+          <div><dt>调查步数</dt><dd>{{ view.snapshot?.metrics.step_count ?? 0 }}</dd></div>
+          <div><dt>工具调用</dt><dd>{{ view.snapshot?.metrics.tool_call_count ?? 0 }}</dd></div>
+          <div><dt>有效证据</dt><dd>{{ view.snapshot?.metrics.evidence_count ?? 0 }}</dd></div>
+          <div><dt>任务覆盖</dt><dd>{{ Math.round((view.snapshot?.metrics.evidence_coverage ?? 0) * 100) }}%</dd></div>
+          <div><dt>结构重试</dt><dd>{{ view.snapshot?.metrics.structured_retry_count ?? 0 }}</dd></div>
+          <div><dt>JSON 兜底</dt><dd>{{ view.snapshot?.metrics.content_fallback_count ?? 0 }}</dd></div>
+        </dl>
+        <div v-if="tokenUsageByNode.length" class="usage-table-wrap">
+          <table><thead><tr><th>节点</th><th>输入</th><th>输出</th><th>总计</th><th>耗时</th></tr></thead><tbody>
+            <tr v-for="([node, usage]) in tokenUsageByNode" :key="node"><td>{{ node }}</td><td>{{ usage.input_tokens ?? 0 }}</td><td>{{ usage.output_tokens ?? 0 }}</td><td>{{ usage.total_tokens ?? 0 }}</td><td>{{ Number(usage.elapsed_seconds ?? 0).toFixed(2) }}s</td></tr>
+          </tbody></table>
+        </div>
+      </section>
+      <section class="observability-card anomaly-card">
+        <div class="observability-heading"><div><p class="mini-title">Agent 异常与降级</p><small>结构重试、兜底、失败与不完整终止</small></div><span>{{ runAnomalies.length }} 条</span></div>
+        <ol v-if="runAnomalies.length" class="anomaly-list">
+          <li v-for="item in runAnomalies" :key="item.key" :class="`level-${item.level}`">
+            <div><code>{{ item.code }}</code><time>{{ formatTime(item.timestamp) }}</time></div><p>{{ item.message }}</p>
+          </li>
+        </ol>
+        <p v-else class="no-anomaly">暂无 Agent 异常或降级记录。</p>
+      </section>
+    </div>
+
+    <RetrievalObservability :novel-id="novel.novel_id" :polling="isRunning" />
+
+    <div v-if="view.snapshot?.final_answer" class="answer-layout answer-only">
       <article class="answer-card">
         <p class="eyebrow">FINAL SYNTHESIS</p><h2>证据型解读</h2>
         <div class="markdown-body" v-html="answerHtml"></div>
         <div v-if="view.snapshot.limitations.length" class="notice"><strong>分析限制</strong><ul><li v-for="item in view.snapshot.limitations" :key="item">{{ item }}</li></ul></div>
       </article>
-      <aside class="metrics-card">
-        <p class="mini-title">运行指标</p>
-        <dl>
-          <div><dt>调查步数</dt><dd>{{ view.snapshot.metrics.step_count ?? 0 }}</dd></div>
-          <div><dt>模型调用</dt><dd>{{ view.snapshot.metrics.model_call_count ?? 0 }}</dd></div>
-          <div><dt>总 Token</dt><dd>{{ view.snapshot.metrics.token_usage?.total_tokens ?? 0 }}</dd></div>
-          <div><dt>工具调用</dt><dd>{{ view.snapshot.metrics.tool_call_count ?? 0 }}</dd></div>
-          <div><dt>有效证据</dt><dd>{{ view.snapshot.metrics.evidence_count ?? 0 }}</dd></div>
-          <div><dt>任务覆盖</dt><dd>{{ Math.round((view.snapshot.metrics.evidence_coverage ?? 0) * 100) }}%</dd></div>
-          <div><dt>结构重试</dt><dd>{{ view.snapshot.metrics.structured_retry_count ?? 0 }}</dd></div>
-          <div><dt>JSON 兜底</dt><dd>{{ view.snapshot.metrics.content_fallback_count ?? 0 }}</dd></div>
-        </dl>
-      </aside>
     </div>
 
     <div v-if="view.snapshot?.evidence.length" class="evidence-section">

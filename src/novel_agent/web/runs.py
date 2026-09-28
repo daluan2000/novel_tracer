@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 import uuid
 from dataclasses import dataclass, field
@@ -20,6 +21,31 @@ from novel_agent.web.events import (
 from novel_agent.web.store import StoredNovel
 
 Executor = Callable[..., AgentExecutionResult]
+LOGGER = logging.getLogger(__name__)
+
+
+def _safe_run_failure(error: BaseException) -> tuple[str, str, bool]:
+    """Classify provider/runtime failures without returning sensitive exception text."""
+
+    names: list[str] = []
+    current: BaseException | None = error
+    for _ in range(4):
+        if current is None:
+            break
+        names.append(type(current).__name__.lower())
+        current = current.__cause__ or current.__context__
+    joined = " ".join(names)
+    if isinstance(error, TimeoutError) or "timeout" in joined:
+        return "model_timeout", "模型请求超时，请稍后重试；已保留此前的执行记录。", True
+    if any(token in joined for token in ("authentication", "permission", "unauthorized")):
+        return "model_authentication_failed", "模型服务鉴权失败，请检查 API Key 配置。", False
+    if "ratelimit" in joined or "rate_limit" in joined:
+        return "model_rate_limited", "模型服务触发频率限制，请稍后重试。", True
+    if any(token in joined for token in ("connection", "network", "connecterror")):
+        return "model_connection_failed", "无法连接模型服务，请检查网络与服务地址。", True
+    if isinstance(error, (RuntimeError, ValueError)):
+        return "runtime_configuration_error", "任务运行配置无效，请检查后端配置。", False
+    return "agent_execution_failed", "任务执行失败，请查看服务端日志后重试。", True
 
 
 @dataclass
@@ -139,7 +165,12 @@ class RunManager:
             record.emit(
                 "status",
                 node=source_node,
-                detail={"label": label, **diagnostic},
+                detail={
+                    "label": label,
+                    "level": "warning",
+                    "operation": "model_response",
+                    **diagnostic,
+                },
                 snapshot=public_snapshot(state),
             )
 
@@ -168,9 +199,23 @@ class RunManager:
                 )
             else:
                 record.status = "completed"
+                termination = snapshot.get("termination_reason")
+                terminal_detail: dict[str, Any] = {"label": "分析完成"}
+                if termination == "max_steps_reached":
+                    terminal_detail.update(
+                        level="warning",
+                        code="max_steps_reached",
+                        label="已达到最大调查步数，使用现有证据生成结果",
+                    )
+                elif termination == "repeated_tool_call":
+                    terminal_detail.update(
+                        level="warning",
+                        code="repeated_tool_call",
+                        label="检测到重复工具调用，已提前终止调查",
+                    )
                 record.emit(
                     "complete",
-                    detail={"label": "分析完成"},
+                    detail=terminal_detail,
                     snapshot=snapshot,
                 )
         except StructuredOutputError as exc:
@@ -185,6 +230,8 @@ class RunManager:
                         "结构化输出失败"
                     ),
                     "code": "structured_output_failed",
+                    "level": "error",
+                    "operation": "model_response",
                     "retryable": True,
                     "schema": exc.schema_name,
                     "attempt": exc.attempts,
@@ -195,11 +242,19 @@ class RunManager:
                 error="模型未按要求返回结构化结果，请重试或更换支持 Function Calling 的模型。",
             )
         except Exception as exc:
+            LOGGER.exception("Agent run %s failed", record.run_id)
             record.status = "failed"
+            code, message, retryable = _safe_run_failure(exc)
             record.emit(
                 "error",
-                detail={"label": "任务执行失败"},
-                error=str(exc),
+                detail={
+                    "label": message,
+                    "code": code,
+                    "level": "error",
+                    "operation": "agent_run",
+                    "retryable": retryable,
+                },
+                error=message,
             )
         finally:
             with self._lock:

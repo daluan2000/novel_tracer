@@ -1,0 +1,13 @@
+{
+  "cases": [
+    {"query": "混世魔王", "expected_section": "第一章 水帘洞", "category": "exact"},
+    {"query": "水帘洞 妖王", "expected_section": "第一章 水帘洞", "category": "multi_term"},
+    {"query": "太白金星", "expected_section": "第二章 招安", "category": "exact"},
+    {"query": "齐天大圣", "expected_section": "第二章 招安", "category": "title_alias"},
+    {"query": "白骨精", "expected_section": "第三章 尸魔", "category": "exact"},
+    {"query": "三次变化", "expected_section": "第三章 尸魔", "category": "event"},
+    {"query": "最早击败的妖王", "expected_section": "第一章 水帘洞", "category": "semantic"},
+    {"query": "天庭使者劝他归顺", "expected_section": "第二章 招安", "category": "semantic"},
+    {"query": "尸魔伪装成人", "expected_section": "第三章 尸魔", "category": "semantic"}
+  ]
+}

@@ -11,11 +11,14 @@ requires-python = ">=3.11"
 dependencies = [
     "charset-normalizer>=3.4,<4",
     "fastapi>=0.115,<1",
+    "jieba>=0.42,<1",
     "langchain-openai>=1.0,<2",
     "langgraph>=1.0,<2",
+    "numpy>=2.0,<3",
     "pydantic>=2.10,<3",
     "python-dotenv>=1.0,<2",
     "python-multipart>=0.0.20,<1",
+    "rank-bm25>=0.2.2,<1",
     "uvicorn>=0.34,<1",
 ]
 

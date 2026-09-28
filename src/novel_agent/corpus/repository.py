@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-import re
-from collections import Counter
 from pathlib import Path
 
 from novel_agent.corpus.loader import load_novel
 from novel_agent.corpus.models import NovelChunk, NovelDocument, SearchHit
+from novel_agent.corpus.retrieval.embeddings import create_embedding_provider
+from novel_agent.corpus.retrieval.service import RetrievalService
+from novel_agent.runtime.config import EmbeddingConfig
 
 
 class NovelCorpus:
@@ -31,6 +32,7 @@ class NovelCorpus:
 
         # chunk_id -> 全书 Chunk 序号：用于读取命中块前后的相邻上下文。
         self._global_index = {chunk.chunk_id: index for index, chunk in enumerate(document.chunks)}
+        self._retrieval = RetrievalService(document)
 
     @classmethod
     def from_path(cls, path: str | Path) -> "NovelCorpus":
@@ -68,71 +70,42 @@ class NovelCorpus:
             ],
         }
 
-    @staticmethod
-    def _query_terms(keyword: str) -> list[str]:
-        """规范化搜索词，同时保留完整短语和按空格拆开的单词，并进行去重。"""
-
-        normalized = re.sub(r"\s+", " ", keyword).strip().casefold()
-        if not normalized:
-            return []
-        terms = [term for term in normalized.split(" ") if term]
-        return list(dict.fromkeys([normalized, *terms]))
-
     def search(self, keyword: str, top_k: int = 5) -> list[SearchHit]:
-        """使用透明的关键词频次评分搜索相关 Chunk。
+        """Search passage-level lexical and dense indexes with lexical fallback."""
 
-        完整短语命中的权重最高；各拆分词命中会累加分数，全部拆分词同时出现
-        还有额外加分。结果按“分数降序、原文位置升序”排列，并返回命中附近
-        的短片段。这里不是语义/向量搜索，因此同义词需要 Researcher 改写查询。
-        """
+        return self._retrieval.search(keyword, top_k)
 
-        terms = self._query_terms(keyword)
-        if not terms:
-            raise ValueError("搜索关键词不能为空。")
+    def retrieval_status(self) -> dict:
+        """Return safe, public index readiness information."""
 
-        # repository 层也设置上限，避免调用方绕过 Tool 的限制拉取过多正文。
-        top_k = min(max(top_k, 1), 20)
-        phrase = terms[0]
-        hits: list[SearchHit] = []
+        return self._retrieval.status()
 
-        for chunk in self.document.chunks:
-            # 正文和章节标题都参与匹配；casefold 比 lower 更适合通用大小写归一化。
-            haystack = chunk.text.casefold()
-            title = (chunk.section_title or "").casefold()
-            counts = Counter({term: haystack.count(term) + title.count(term) for term in terms})
-            matched = [term for term in terms if counts[term] > 0]
-            if not matched:
-                continue
-            phrase_count = counts[phrase]
-            individual_terms = terms[1:] or terms
+    def prepare_dense_index(self, config: EmbeddingConfig) -> bool:
+        """Mark dense indexing as building, or degraded when it is not configured."""
 
-            # 完整短语每次命中记 5 分，拆分词按出现次数记分；所有拆分词均出现
-            # 再奖励 3 分，使同时覆盖多个关键词的 Chunk 排在前面。
-            score = phrase_count * 5.0 + sum(counts[term] for term in individual_terms)
-            if individual_terms and all(counts[term] > 0 for term in individual_terms):
-                score += 3.0
+        return self._retrieval.prepare_dense(
+            model_name=config.model_name,
+            configured=config.enabled,
+        )
 
-            # 摘要围绕最早命中位置截取，减少传给模型的无关正文。
-            positions = [haystack.find(term) for term in matched if haystack.find(term) >= 0]
-            position = min(positions) if positions else 0
-            snippet_start = max(0, position - 80)
-            snippet_end = min(len(chunk.text), position + max(len(term) for term in matched) + 140)
-            snippet = chunk.text[snippet_start:snippet_end].strip()
-            hits.append(
-                SearchHit(
-                    chunk_id=chunk.chunk_id,
-                    section_id=chunk.section_id,
-                    section_title=chunk.section_title,
-                    start_line=chunk.start_line,
-                    end_line=chunk.end_line,
-                    score=score,
-                    matched_terms=matched,
-                    snippet=snippet,
-                )
+    def build_dense_index(
+        self,
+        config: EmbeddingConfig,
+        cache_root: str | Path = "output/indexes",
+    ) -> bool:
+        """Build or load the dense index; failures leave lexical search available."""
+
+        try:
+            provider = create_embedding_provider(config)
+            self._retrieval.build_dense_index(
+                provider,
+                model_name=config.model_name,
+                cache_root=Path(cache_root),
             )
-
-        hits.sort(key=lambda item: (-item.score, item.start_line, item.chunk_id))
-        return hits[:top_k]
+        except Exception:
+            self._retrieval.mark_dense_failed()
+            return False
+        return True
 
     def read_context(self, chunk_id: str, before: int = 1, after: int = 1) -> list[NovelChunk]:
         """按全书顺序读取目标 Chunk 及其前后相邻块。

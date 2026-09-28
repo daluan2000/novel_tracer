@@ -2,6 +2,7 @@
 import { ref, watch } from 'vue'
 import { api } from '../api'
 import type { NovelChunk, NovelInfo, SearchHit } from '../types'
+import RetrievalObservability from './RetrievalObservability.vue'
 
 const props = defineProps<{ novel: NovelInfo }>()
 const query = ref('')
@@ -11,6 +12,7 @@ const loading = ref(false)
 const error = ref('')
 const openChunk = ref<string | null>(null)
 const contexts = ref<Record<string, NovelChunk[]>>({})
+const retrievalObservability = ref<InstanceType<typeof RetrievalObservability> | null>(null)
 
 watch(() => props.novel.novel_id, () => {
   results.value = []
@@ -31,6 +33,7 @@ async function search() {
     error.value = cause instanceof Error ? cause.message : '搜索失败。'
   } finally {
     loading.value = false
+    await retrievalObservability.value?.refresh()
   }
 }
 
@@ -52,13 +55,14 @@ async function toggleContext(hit: SearchHit) {
 
 <template>
   <section class="workspace-panel">
-    <div class="section-heading"><div><p class="eyebrow">LOCAL RETRIEVAL</p><h2>原文检索</h2></div><span>不调用模型</span></div>
+    <div class="section-heading"><div><p class="eyebrow">HYBRID RETRIEVAL</p><h2>原文检索</h2></div><span>BM25 + 语义召回</span></div>
+    <RetrievalObservability ref="retrievalObservability" :novel-id="novel.novel_id" />
     <form class="search-form" @submit.prevent="search">
       <label class="field grow"><span>关键词（多个词用空格分隔）</span><input v-model="query" placeholder="例如：吕树 吕小鱼" /></label>
       <label class="field compact"><span>结果数</span><select v-model="topK"><option v-for="n in [3, 5, 10, 20]" :key="n" :value="n">{{ n }}</option></select></label>
       <button class="button primary" :disabled="loading">{{ loading ? '检索中…' : '开始检索' }}</button>
     </form>
-    <p v-if="error" class="form-error" role="alert">{{ error }}</p>
+    <div v-if="error" class="inline-anomaly level-error" role="alert"><strong>search_operation_failed</strong><p>{{ error }}</p></div>
     <div v-if="results.length" class="result-list">
       <article v-for="hit in results" :key="hit.chunk_id" class="search-result">
         <div class="result-meta">

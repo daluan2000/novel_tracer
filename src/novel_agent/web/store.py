@@ -12,6 +12,7 @@ from fastapi import UploadFile
 
 from novel_agent.application.service import load_corpus
 from novel_agent.corpus.repository import NovelCorpus
+from novel_agent.runtime.config import EmbeddingConfig
 
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
@@ -26,15 +27,38 @@ class StoredNovel:
 
 
 class NovelStore:
-    def __init__(self, upload_limit: int = MAX_UPLOAD_BYTES):
+    def __init__(
+        self,
+        upload_limit: int = MAX_UPLOAD_BYTES,
+        index_cache_root: str | Path = "output/indexes",
+    ):
         self.upload_limit = upload_limit
+        self.index_cache_root = Path(index_cache_root)
         self._temporary_directory = tempfile.TemporaryDirectory(prefix="novel-agent-")
         self.root = Path(self._temporary_directory.name)
         self._items: dict[str, StoredNovel] = {}
+        self._index_tasks: dict[str, asyncio.Task[None]] = {}
 
-    def close(self) -> None:
+    async def close(self) -> None:
+        tasks = list(self._index_tasks.values())
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._index_tasks.clear()
         self._items.clear()
         self._temporary_directory.cleanup()
+
+    async def _build_dense_index(
+        self,
+        item: StoredNovel,
+        config: EmbeddingConfig,
+    ) -> None:
+        await asyncio.to_thread(
+            item.corpus.build_dense_index,
+            config,
+            self.index_cache_root,
+        )
 
     async def add(self, upload: UploadFile) -> StoredNovel:
         filename = Path(upload.filename or "").name
@@ -68,6 +92,11 @@ class NovelStore:
             elapsed_seconds=loaded.elapsed_seconds,
         )
         self._items[novel_id] = item
+        embedding_config = EmbeddingConfig.from_env()
+        if item.corpus.prepare_dense_index(embedding_config):
+            task = asyncio.create_task(self._build_dense_index(item, embedding_config))
+            self._index_tasks[novel_id] = task
+            task.add_done_callback(lambda _task: self._index_tasks.pop(novel_id, None))
         return item
 
     def get(self, novel_id: str) -> StoredNovel:

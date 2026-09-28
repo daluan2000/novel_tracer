@@ -5,7 +5,7 @@ import type { NovelInfo } from '../types'
 import SearchPanel from './SearchPanel.vue'
 
 vi.mock('../api', () => ({
-  api: { search: vi.fn(), context: vi.fn() },
+  api: { search: vi.fn(), context: vi.fn(), retrievalStatus: vi.fn() },
 }))
 
 const novel: NovelInfo = {
@@ -30,6 +30,22 @@ describe('SearchPanel', () => {
       chunk_id: 'chunk-1', section_id: 'section-1', section_title: '第一章',
       start_line: 1, end_line: 5, text: '人物在这里出现。',
     }])
+    vi.mocked(api.retrievalStatus).mockResolvedValue({
+      status: 'degraded', active_mode: 'lexical', passage_count: 12,
+      embedding_model: null, error_code: 'embedding_not_configured',
+      metrics: {
+        document_request_count: 0, document_text_count: 0,
+        document_input_characters: 0, query_request_count: 0,
+        query_input_characters: 0, query_cache_hit_count: 0,
+        index_cache_hit: null, failed_request_count: 0, fallback_count: 1,
+        last_request_elapsed_seconds: null,
+      },
+      events: [{
+        timestamp: '2026-09-28T00:00:00Z', level: 'warning',
+        code: 'embedding_not_configured', message: '未配置 Embedding，检索已使用 BM25。',
+        operation: 'index_build', fallback: 'bm25',
+      }],
+    })
   })
 
   it('searches and expands a result context', async () => {
@@ -40,6 +56,8 @@ describe('SearchPanel', () => {
 
     expect(api.search).toHaveBeenCalledWith('book-1', '人物', 5)
     expect(wrapper.text()).toContain('人物在这里。')
+    expect(wrapper.text()).toContain('Embedding 消耗与检索状态')
+    expect(wrapper.text()).toContain('embedding_not_configured')
 
     await wrapper.find('.text-button').trigger('click')
     await flushPromises()
