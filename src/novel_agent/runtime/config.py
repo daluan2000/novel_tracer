@@ -8,6 +8,47 @@ from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 
 
+_THINKING_MODE_ALIASES = {
+    "on": "enabled",
+    "true": "enabled",
+    "enabled": "enabled",
+    "off": "disabled",
+    "false": "disabled",
+    "disabled": "disabled",
+}
+
+
+def _normalize_thinking_mode(raw_value: str) -> str | None:
+    value = raw_value.strip().lower()
+    if not value or value == "auto":
+        return None
+    try:
+        return _THINKING_MODE_ALIASES[value]
+    except KeyError as exc:
+        raise RuntimeError(
+            "MODEL_THINKING_MODE 只能是 auto、on/off、true/false、enabled/disabled 或留空。"
+        ) from exc
+
+
+def _uses_enable_thinking(model_name: str, base_url: str | None) -> bool:
+    """Detect Qwen-compatible APIs, which use a boolean thinking switch."""
+
+    identity = f"{model_name} {base_url or ''}".casefold()
+    return any(marker in identity for marker in ("qwen", "qwq", "dashscope", "qianwen"))
+
+
+def _thinking_extra_body(
+    model_name: str,
+    base_url: str | None,
+    thinking_mode: str | None,
+) -> dict[str, object] | None:
+    if thinking_mode is None:
+        return None
+    if _uses_enable_thinking(model_name, base_url):
+        return {"enable_thinking": thinking_mode == "enabled"}
+    return {"thinking": {"type": thinking_mode}}
+
+
 @dataclass(frozen=True)
 class ModelConfig:
     api_key: str
@@ -26,13 +67,11 @@ class ModelConfig:
                 "未配置 OPENAI_API_KEY。请复制 .env.example 为 .env，填写支持 Tool Calling 的模型配置。"
             )
         model_name = os.getenv("MODEL_NAME", "gpt-4.1-mini").strip() or "gpt-4.1-mini"
-        thinking_mode = os.getenv("MODEL_THINKING_MODE", "").strip().lower() or None
+        thinking_mode = _normalize_thinking_mode(os.getenv("MODEL_THINKING_MODE", ""))
         if thinking_mode is None and model_name.lower().startswith("deepseek"):
             # DeepSeek thinking mode rejects the named tool_choice used by
             # function-calling structured output.
             thinking_mode = "disabled"
-        if thinking_mode not in {None, "enabled", "disabled"}:
-            raise RuntimeError("MODEL_THINKING_MODE 只能是 enabled、disabled 或留空。")
         return cls(
             api_key=api_key,
             model_name=model_name,
@@ -46,10 +85,10 @@ class ModelConfig:
         )
 
     def create_model(self) -> ChatOpenAI:
-        extra_body = (
-            {"thinking": {"type": self.thinking_mode}}
-            if self.thinking_mode is not None
-            else None
+        extra_body = _thinking_extra_body(
+            self.model_name,
+            self.base_url,
+            self.thinking_mode,
         )
         return ChatOpenAI(
             api_key=self.api_key,

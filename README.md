@@ -77,13 +77,13 @@ MODEL_NAME=gpt-4.1-mini
 OPENAI_BASE_URL=https://your-provider.example/v1
 ```
 
-DeepSeek 的 Thinking mode 不支持本项目结构化输出使用的 named `tool_choice`。当 `MODEL_NAME` 以 `deepseek` 开头时，程序默认发送：
+Thinking mode 可能不兼容本项目结构化输出使用的 named `tool_choice`。完整 Agent 流程建议关闭思考：
 
 ```dotenv
 MODEL_THINKING_MODE=disabled
 ```
 
-其他模型默认不发送该参数。需要显式控制时，可将它设置为 `enabled`、`disabled` 或留空；完整 Agent 流程应使用 `disabled`。
+程序会按模型名和服务地址适配常见接口：千问/Qwen 发送 `enable_thinking=false`，DeepSeek、GLM、Kimi 等兼容接口发送 `thinking.type=disabled`。也可使用 `off` 或 `false`；开启时使用 `enabled`、`on` 或 `true`。设置为 `auto` 或留空时，通常不发送思考参数，但 DeepSeek 模型仍默认关闭，以保持原有兼容行为。
 
 所选模型必须同时支持：
 

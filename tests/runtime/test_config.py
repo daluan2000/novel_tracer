@@ -26,12 +26,48 @@ def test_non_deepseek_does_not_send_thinking_parameter(monkeypatch) -> None:
     assert config.request_timeout_seconds == 120.0
 
 
+@pytest.mark.parametrize("value", ["off", "false", "disabled"])
+def test_qwen_disabled_thinking_uses_boolean_parameter(monkeypatch, value: str) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+    monkeypatch.setenv("MODEL_NAME", "qwen-plus")
+    monkeypatch.setenv("MODEL_THINKING_MODE", value)
+
+    config = ModelConfig.from_env()
+    model = config.create_model()
+
+    assert config.thinking_mode == "disabled"
+    assert model.extra_body == {"enable_thinking": False}
+
+
+def test_deepseek_disabled_thinking_uses_typed_parameter(monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://api.deepseek.com/v1")
+    monkeypatch.setenv("MODEL_NAME", "deepseek-chat")
+    monkeypatch.setenv("MODEL_THINKING_MODE", "off")
+
+    model = ModelConfig.from_env().create_model()
+
+    assert model.extra_body == {"thinking": {"type": "disabled"}}
+
+
+def test_qwen_detection_also_supports_qianwen_compatible_url(monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://maas.qianwenaiapi.com/compatible-mode/v1")
+    monkeypatch.setenv("MODEL_NAME", "provider-model-alias")
+    monkeypatch.setenv("MODEL_THINKING_MODE", "enabled")
+
+    model = ModelConfig.from_env().create_model()
+
+    assert model.extra_body == {"enable_thinking": True}
+
+
 def test_invalid_thinking_mode_is_rejected(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setenv("MODEL_NAME", "deepseek-flash")
     monkeypatch.setenv("MODEL_THINKING_MODE", "sometimes")
 
-    with pytest.raises(RuntimeError, match="enabled、disabled"):
+    with pytest.raises(RuntimeError, match="enabled/disabled"):
         ModelConfig.from_env()
 
 

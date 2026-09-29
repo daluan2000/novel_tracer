@@ -14,5 +14,9 @@ def create_embedding_provider(config: EmbeddingConfig) -> EmbeddingProvider:
         api_key=config.api_key,
         base_url=config.base_url,
         chunk_size=10,
+        # Some OpenAI-compatible providers (including DashScope) accept only
+        # strings in ``input``. LangChain's length-safe path tokenizes text
+        # into integer arrays first, which those providers reject.
+        check_embedding_ctx_length=False,
         timeout=config.request_timeout_seconds,
     )
