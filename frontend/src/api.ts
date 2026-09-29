@@ -2,6 +2,7 @@ import type {
   ConfigStatus,
   NovelChunk,
   NovelInfo,
+  RetrievalStatus,
   SearchHit,
   SectionPage,
 } from './types'
@@ -42,6 +43,12 @@ export const api = {
   sections(novelId: string, offset = 0, limit = 50) {
     return request<SectionPage>(
       `/api/novels/${encodeURIComponent(novelId)}/sections?offset=${offset}&limit=${limit}`,
+    )
+  },
+
+  retrievalStatus(novelId: string) {
+    return request<RetrievalStatus>(
+      `/api/novels/${encodeURIComponent(novelId)}/retrieval-status`,
     )
   },
 

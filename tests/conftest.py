@@ -5,6 +5,13 @@ import pytest
 from novel_agent.corpus.repository import NovelCorpus
 
 
+@pytest.fixture(autouse=True)
+def disable_paid_embedding_calls(monkeypatch) -> None:
+    """Automated tests opt into fake embeddings explicitly and never call a paid API."""
+
+    monkeypatch.setenv("EMBEDDING_MODEL", "")
+
+
 @pytest.fixture
 def corpus(tmp_path) -> NovelCorpus:
     body = "吕树在庙会上遇到了吕小鱼，两人一起讨论晚饭。" * 40

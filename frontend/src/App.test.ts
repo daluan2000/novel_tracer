@@ -6,7 +6,8 @@ import App from './App.vue'
 vi.mock('./api', () => ({
   api: {
     config: vi.fn(), uploadNovel: vi.fn(), sections: vi.fn(),
-    search: vi.fn(), context: vi.fn(), createRun: vi.fn(), cancelRun: vi.fn(),
+    search: vi.fn(), context: vi.fn(), retrievalStatus: vi.fn(),
+    createRun: vi.fn(), cancelRun: vi.fn(),
   },
 }))
 

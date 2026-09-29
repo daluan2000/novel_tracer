@@ -10,10 +10,10 @@ describe('FlowGraph', () => {
 
     expect(wrapper.findAll('.is-done')).toHaveLength(1)
     expect(wrapper.find('.is-active').text()).toContain('Researcher')
-    expect(wrapper.text()).toContain('active')
+    expect(wrapper.text()).toContain('正在执行')
 
     await wrapper.setProps({ failed: true })
     expect(wrapper.find('.is-failed').text()).toContain('Researcher')
-    expect(wrapper.text()).toContain('failed')
+    expect(wrapper.text()).toContain('执行失败')
   })
 })

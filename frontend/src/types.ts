@@ -56,6 +56,38 @@ export interface SearchHit {
   snippet: string
 }
 
+export interface RetrievalStatus {
+  status: 'lexical_ready' | 'building' | 'hybrid_ready' | 'degraded'
+  active_mode: 'lexical' | 'hybrid'
+  passage_count: number
+  embedding_model: string | null
+  error_code: string | null
+  metrics: EmbeddingMetrics
+  events: ObservabilityEvent[]
+}
+
+export interface EmbeddingMetrics {
+  document_request_count: number
+  document_text_count: number
+  document_input_characters: number
+  query_request_count: number
+  query_input_characters: number
+  query_cache_hit_count: number
+  index_cache_hit: boolean | null
+  failed_request_count: number
+  fallback_count: number
+  last_request_elapsed_seconds: number | null
+}
+
+export interface ObservabilityEvent {
+  timestamp: string
+  level: 'info' | 'warning' | 'error'
+  code: string
+  message: string
+  operation: string
+  fallback: string | null
+}
+
 export interface NovelChunk {
   chunk_id: string
   section_id: string
@@ -156,6 +188,8 @@ export interface RunEvent {
     failure_reason?: string
     code?: string
     retryable?: boolean
+    level?: 'info' | 'warning' | 'error'
+    operation?: string
   }
   snapshot: RunSnapshot | Record<string, never>
   error: string | null

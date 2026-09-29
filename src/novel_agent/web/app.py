@@ -62,7 +62,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         yield
-        store.close()
+        await store.close()
 
     app = FastAPI(title="Novel Agent Web", version="0.2.0", lifespan=lifespan)
     app.state.novels = store
@@ -112,6 +112,13 @@ def create_app(
             "limit": limit,
             "total": len(sections),
         }
+
+    @app.get("/api/novels/{novel_id}/retrieval-status")
+    def retrieval_status(novel_id: str) -> dict[str, Any]:
+        try:
+            return store.get(novel_id).corpus.retrieval_status()
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc.args[0])) from exc
 
     @app.get("/api/novels/{novel_id}/search")
     def search_novel(

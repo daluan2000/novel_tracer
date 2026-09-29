@@ -15,7 +15,9 @@
 - 支持同一本小说混用多种标题格式。
 - 标题识别不可靠时自动按段落和长度降级切分。
 - 所有 Chunk 保留行号和字符偏移，可定位回原文。
-- 四个只读工具：结构查看、关键词搜索、上下文读取、Section 读取。
+- 四个只读工具：结构查看、混合搜索、上下文读取、Section 读取。
+- 小段落中文 BM25 与可选 Embedding 语义召回，通过 RRF 融合并映射回稳定 Chunk。
+- 上传后立即开放词法搜索，后台构建和缓存向量索引；Embedding 异常时自动降级。
 - LangGraph 链路：Planner（简单题使用本地单任务计划）、Researcher、ToolNode、Assessor、Replanner、Writer。
 - 最大调查步数、重复工具调用保护、结构化工具错误。
 - 每轮最多 2 个工具、每项任务最多 2 个调查轮次和 6 条证据、最多 2 次 Replan。
@@ -75,13 +77,13 @@ MODEL_NAME=gpt-4.1-mini
 OPENAI_BASE_URL=https://your-provider.example/v1
 ```
 
-DeepSeek 的 Thinking mode 不支持本项目结构化输出使用的 named `tool_choice`。当 `MODEL_NAME` 以 `deepseek` 开头时，程序默认发送：
+Thinking mode 可能不兼容本项目结构化输出使用的 named `tool_choice`。完整 Agent 流程建议关闭思考：
 
 ```dotenv
 MODEL_THINKING_MODE=disabled
 ```
 
-其他模型默认不发送该参数。需要显式控制时，可将它设置为 `enabled`、`disabled` 或留空；完整 Agent 流程应使用 `disabled`。
+程序会按模型名和服务地址适配常见接口：千问/Qwen 发送 `enable_thinking=false`，DeepSeek、GLM、Kimi 等兼容接口发送 `thinking.type=disabled`。也可使用 `off` 或 `false`；开启时使用 `enabled`、`on` 或 `true`。设置为 `auto` 或留空时，通常不发送思考参数，但 DeepSeek 模型仍默认关闭，以保持原有兼容行为。
 
 所选模型必须同时支持：
 
@@ -98,6 +100,32 @@ NOVEL_AGENT_STRUCTURED_RETRIES=2
 ```
 
 合法的完整 JSON 文本会在通过目标 Pydantic Schema 校验后被接受；余额、认证、限流和网络异常不会进入这层格式重试。诊断只记录节点、Schema、次数和失败类别，不保存模型原始响应。
+
+单次聊天模型请求默认最多等待 120 秒，避免供应商连接异常时 Agent 永久停在上一个已完成节点。可按供应商延迟调整：
+
+```dotenv
+MODEL_REQUEST_TIMEOUT_SECONDS=120
+```
+
+### 混合检索配置
+
+不设置 `EMBEDDING_MODEL` 时，系统只使用本地中文 BM25，不会发起 Embedding 请求。要启用语义召回，配置供应商实际支持的模型：
+
+```dotenv
+EMBEDDING_MODEL=your-embedding-model
+```
+
+Embedding 默认复用 `OPENAI_API_KEY` 和 `OPENAI_BASE_URL`。如需使用不同供应商，可单独设置：
+
+```dotenv
+EMBEDDING_API_KEY=your-embedding-key
+EMBEDDING_BASE_URL=https://your-embedding-provider.example/v1
+EMBEDDING_REQUEST_TIMEOUT_SECONDS=30
+```
+
+上传小说时会同步建立约 500 字的 Passage 和 BM25 索引，随后后台加载或构建向量索引。Embedding 每批最多发送 10 条文本以兼容千问接口，请求默认 30 秒超时。缓存写入 `output/indexes`，由小说内容、切分配置和 Embedding 模型共同决定是否有效。向量尚未就绪、未配置、超时或调用失败时，搜索自动使用 BM25。
+
+前端的“Embedding 消耗与检索状态”会显示文档/查询请求次数、编码文本数、输入字符数、缓存命中、失败请求和 BM25 降级次数，并保留最近 50 条安全事件。多数 OpenAI-compatible Embedding 接口不返回可靠 token 用量，因此这里明确以字符数计量，不将其标记为 token；供应商原始异常正文和凭据不会返回浏览器。
 
 ## 使用方法
 
@@ -125,8 +153,9 @@ novel-agent
 
 - 拖拽或选择 TXT，并查看编码、章节与 Chunk 概览。
 - 分页浏览识别出的章节结构。
-- 不调用模型的关键词检索与上下文展开。
+- 支持降级的 BM25/Embedding 混合检索与上下文展开。
 - 实时显示 Agent 节点图、调查计划、执行时间线、证据和最终答案。
+- 实时展示聊天模型 input/output/reasoning/cached token、分节点耗时，以及 Agent 和检索链路的异常、重试与降级记录。
 - 在当前模型调用结束后的节点边界安全停止任务。
 
 ### 一键启动开发环境
@@ -140,6 +169,8 @@ Windows PowerShell：
 ```powershell
 python .\start_dev.py
 ```
+
+脚本会在启动前检查 `8000` 和 `5173`。若发现监听进程，会显示端口、PID 和进程名，并询问是否终止；只有输入 `y` 或 `yes` 才会清理进程并继续，直接回车或输入其他内容会保留原进程并取消启动。无法识别 PID 时脚本不会尝试盲目清理。
 
 Linux：
 
@@ -169,7 +200,7 @@ npm run dev
 | 工具 | 作用 |
 |---|---|
 | `get_book_structure(section_offset, section_limit)` | 查看结构总览；章节列表可选分页，每页最多 20 条 |
-| `search_novel(keyword, top_k)` | 搜索关键词，模型工具默认 3 条、最多 8 条 |
+| `search_novel(keyword, top_k)` | Passage 级 BM25/向量混合搜索，默认 3 条、最多 8 条 |
 | `read_context(chunk_id, before, after)` | 默认仅读取命中 Chunk，最多附带前后各 1 个 Chunk |
 | `read_section(section_id, start_chunk, limit)` | 默认读取 2 个 Chunk，最多 3 个 |
 

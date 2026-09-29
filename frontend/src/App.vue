@@ -18,7 +18,7 @@ const error = ref('')
 const fileInput = ref<HTMLInputElement | null>(null)
 
 const tabs: Array<{ id: TabId; label: string; index: string }> = [
-  { id: 'agent', label: 'Agent 分析', index: '01' },
+  { id: 'agent', label: '智能分析', index: '01' },
   { id: 'structure', label: '结构概览', index: '02' },
   { id: 'search', label: '文本检索', index: '03' },
 ]
@@ -72,7 +72,7 @@ function formatNumber(value: number) {
 
     <main>
       <section class="hero">
-        <div class="hero-copy"><p class="eyebrow">READ · TRACE · VERIFY</p><h1>把整部长篇小说，<br /><em>变成可追溯的答案。</em></h1><p>导入 TXT，观察 Agent 如何规划、检索、核验证据，并回到每一处原文。</p></div>
+        <div class="hero-copy"><p class="eyebrow">阅读 · 追溯 · 核验</p><h1>把整部长篇小说，<br /><em>变成可追溯的答案。</em></h1><p>导入 TXT，查看系统如何规划问题、检索原文、核验证据，并让每个结论都能回到出处。</p></div>
         <label class="upload-zone" :class="{ dragging, disabled: runActive }" @dragover.prevent="dragging = true" @dragleave.prevent="dragging = false" @drop.prevent="handleDrop">
           <input ref="fileInput" type="file" accept=".txt,text/plain" :disabled="uploading || runActive" @change="upload(($event.target as HTMLInputElement).files?.[0])" />
           <span class="upload-icon" aria-hidden="true">↥</span>
@@ -85,8 +85,8 @@ function formatNumber(value: number) {
       <p v-if="error" class="global-error" role="alert">{{ error }}</p>
 
       <section v-if="novel" class="book-strip">
-        <div><span class="book-glyph">文</span><div><strong>{{ novel.filename }}</strong><small>{{ novel.encoding }} · {{ novel.elapsed_seconds.toFixed(2) }}s 完成解析</small></div></div>
-        <dl><div><dt>字符</dt><dd>{{ formatNumber(novel.character_count) }}</dd></div><div><dt>行</dt><dd>{{ formatNumber(novel.line_count) }}</dd></div><div><dt>章节</dt><dd>{{ formatNumber(novel.section_count) }}</dd></div><div><dt>Chunks</dt><dd>{{ formatNumber(novel.chunk_count) }}</dd></div></dl>
+        <div><span class="book-glyph">文</span><div><strong>{{ novel.filename }}</strong><small>{{ novel.encoding }} · {{ novel.elapsed_seconds.toFixed(2) }} 秒完成解析</small></div></div>
+        <dl><div><dt>字符</dt><dd>{{ formatNumber(novel.character_count) }}</dd></div><div><dt>行</dt><dd>{{ formatNumber(novel.line_count) }}</dd></div><div><dt>章节</dt><dd>{{ formatNumber(novel.section_count) }}</dd></div><div><dt>Chunk</dt><dd>{{ formatNumber(novel.chunk_count) }}</dd></div></dl>
       </section>
 
       <section class="workbench" :class="{ empty: !novel }">
@@ -98,9 +98,9 @@ function formatNumber(value: number) {
           <StructurePanel v-show="activeTab === 'structure'" :novel="novel" />
           <SearchPanel v-show="activeTab === 'search'" :novel="novel" />
         </template>
-        <div v-else class="onboarding"><span>01</span><h2>先导入一部小说</h2><p>结构概览、本地检索与 Agent 调查会在这里展开。</p></div>
+        <div v-else class="onboarding"><span>01</span><h2>先导入一部小说</h2><p>导入后即可查看章节结构、检索原文，并开展基于证据的智能分析。</p></div>
       </section>
     </main>
-    <footer><span>Novel Lens</span><p>每一个结论，都应该能回到原文。</p><span>Local / v0.1</span></footer>
+    <footer><span>Novel Lens</span><p>每一个结论，都应该能回到原文。</p><span>本地版 · v0.1</span></footer>
   </div>
 </template>
