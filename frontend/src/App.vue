@@ -7,9 +7,11 @@ import SearchPanel from './components/SearchPanel.vue'
 import StructurePanel from './components/StructurePanel.vue'
 
 type TabId = 'agent' | 'structure' | 'search'
+const SELECTED_NOVEL_KEY = 'novel-agent:selected-novel'
 
 const config = ref<ConfigStatus | null>(null)
 const novel = ref<NovelInfo | null>(null)
+const novels = ref<NovelInfo[]>([])
 const activeTab = ref<TabId>('agent')
 const uploading = ref(false)
 const dragging = ref(false)
@@ -25,11 +27,26 @@ const tabs: Array<{ id: TabId; label: string; index: string }> = [
 
 onMounted(async () => {
   try {
-    config.value = await api.config()
+    const [loadedConfig, loadedNovels] = await Promise.all([api.config(), api.novels()])
+    config.value = loadedConfig
+    novels.value = loadedNovels.items
+    const savedId = localStorage.getItem(SELECTED_NOVEL_KEY)
+    const restored = novels.value.find((item) => item.novel_id === savedId) ?? novels.value[0]
+    if (restored) selectNovel(restored)
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : '无法连接后端服务。'
   }
 })
+
+function selectNovel(selected: NovelInfo) {
+  novel.value = selected
+  localStorage.setItem(SELECTED_NOVEL_KEY, selected.novel_id)
+}
+
+function selectNovelById(novelId: string) {
+  const selected = novels.value.find((item) => item.novel_id === novelId)
+  if (selected) selectNovel(selected)
+}
 
 async function upload(file?: File) {
   if (!file || runActive.value) return
@@ -40,7 +57,9 @@ async function upload(file?: File) {
   }
   uploading.value = true
   try {
-    novel.value = await api.uploadNovel(file)
+    const uploaded = await api.uploadNovel(file)
+    novels.value = [uploaded, ...novels.value.filter((item) => item.novel_id !== uploaded.novel_id)]
+    selectNovel(uploaded)
     activeTab.value = 'agent'
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : '小说上传失败。'
@@ -86,6 +105,12 @@ function formatNumber(value: number) {
 
       <section v-if="novel" class="book-strip">
         <div><span class="book-glyph">文</span><div><strong>{{ novel.filename }}</strong><small>{{ novel.encoding }} · {{ novel.elapsed_seconds.toFixed(2) }} 秒完成解析</small></div></div>
+        <label class="book-selector">
+          <span>已保存小说</span>
+          <select :value="novel.novel_id" :disabled="runActive || uploading" @change="selectNovelById(($event.target as HTMLSelectElement).value)">
+            <option v-for="item in novels" :key="item.novel_id" :value="item.novel_id">{{ item.filename }}</option>
+          </select>
+        </label>
         <dl><div><dt>字符</dt><dd>{{ formatNumber(novel.character_count) }}</dd></div><div><dt>行</dt><dd>{{ formatNumber(novel.line_count) }}</dd></div><div><dt>章节</dt><dd>{{ formatNumber(novel.section_count) }}</dd></div><div><dt>Chunk</dt><dd>{{ formatNumber(novel.chunk_count) }}</dd></div></dl>
       </section>
 

@@ -18,6 +18,7 @@ from novel_agent.application.service import execute_agent
 from novel_agent.runtime.config import (
     ModelConfig,
     default_max_steps,
+    novel_agent_data_dir,
     structured_output_retries,
 )
 from novel_agent.web.events import TERMINAL_STATUSES
@@ -55,14 +56,21 @@ def create_app(
     executor: Executor = execute_agent,
     model_factory: Callable[[], Any] | None = None,
     upload_limit: int = MAX_UPLOAD_BYTES,
+    data_root: str | Path | None = None,
 ) -> FastAPI:
-    store = NovelStore(upload_limit=upload_limit)
+    store = NovelStore(
+        upload_limit=upload_limit,
+        data_root=data_root if data_root is not None else novel_agent_data_dir(),
+    )
     runs = RunManager(executor=executor, model_factory=model_factory)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
-        yield
-        await store.close()
+        await store.open()
+        try:
+            yield
+        finally:
+            await store.close()
 
     app = FastAPI(title="Novel Agent Web", version="0.2.0", lifespan=lifespan)
     app.state.novels = store
@@ -95,6 +103,14 @@ def create_app(
             return novel_info(await store.add(file))
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/novels")
+    def list_novels() -> dict[str, Any]:
+        items = store.list()
+        return {
+            "items": [novel_info(item) for item in items],
+            "total": len(items),
+        }
 
     @app.get("/api/novels/{novel_id}/sections")
     def list_sections(

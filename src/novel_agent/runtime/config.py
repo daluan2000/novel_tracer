@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import math
 from dataclasses import dataclass
+from pathlib import Path
 
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
@@ -148,6 +149,14 @@ def _timeout_from_env(name: str, default: float) -> float:
 def default_max_steps() -> int:
     load_dotenv()
     return int(os.getenv("NOVEL_AGENT_MAX_STEPS", "16"))
+
+
+def novel_agent_data_dir() -> Path:
+    """Return the local root used for persisted novels and retrieval indexes."""
+
+    load_dotenv()
+    configured = os.getenv("NOVEL_AGENT_DATA_DIR", "output").strip() or "output"
+    return Path(configured).expanduser()
 
 
 def structured_output_retries() -> int:

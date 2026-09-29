@@ -28,6 +28,11 @@ export interface NovelInfo {
   elapsed_seconds: number
 }
 
+export interface NovelPage {
+  items: NovelInfo[]
+  total: number
+}
+
 export interface SectionItem {
   section_id: string
   title: string | null

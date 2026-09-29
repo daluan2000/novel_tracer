@@ -2,6 +2,7 @@ import type {
   ConfigStatus,
   NovelChunk,
   NovelInfo,
+  NovelPage,
   RetrievalStatus,
   SearchHit,
   SectionPage,
@@ -33,6 +34,8 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   config: () => request<ConfigStatus>('/api/config'),
+
+  novels: () => request<NovelPage>('/api/novels'),
 
   uploadNovel(file: File) {
     const form = new FormData()

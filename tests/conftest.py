@@ -6,10 +6,11 @@ from novel_agent.corpus.repository import NovelCorpus
 
 
 @pytest.fixture(autouse=True)
-def disable_paid_embedding_calls(monkeypatch) -> None:
-    """Automated tests opt into fake embeddings explicitly and never call a paid API."""
+def isolate_runtime_data(monkeypatch, tmp_path) -> None:
+    """Keep tests isolated and ensure they never call a paid embedding API."""
 
     monkeypatch.setenv("EMBEDDING_MODEL", "")
+    monkeypatch.setenv("NOVEL_AGENT_DATA_DIR", str(tmp_path / "runtime-data"))
 
 
 @pytest.fixture
