@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -77,6 +78,130 @@ def _build_hybrid(document, cache_root: Path, provider: FakeEmbedding | None = N
     )
     assert service.status()["status"] == "hybrid_ready"
     return service, embedding
+
+
+def test_disabling_dense_invalidates_in_flight_build(novel_document, tmp_path) -> None:
+    started = threading.Event()
+    release = threading.Event()
+
+    class BlockingEmbedding(FakeEmbedding):
+        def embed_documents(self, texts: list[str]) -> list[list[float]]:
+            self.document_calls += 1
+            started.set()
+            assert release.wait(timeout=2)
+            return [self._vector(text) for text in texts]
+
+    service = RetrievalService(novel_document)
+    provider = BlockingEmbedding()
+    generation = service.prepare_dense(model_name="fake-embedding", configured=True)
+    assert generation is not None
+    worker = threading.Thread(
+        target=service.build_dense_index,
+        kwargs={
+            "provider": provider,
+            "model_name": "fake-embedding",
+            "cache_root": tmp_path,
+            "generation": generation,
+        },
+    )
+    worker.start()
+    assert started.wait(timeout=1)
+
+    service.disable_dense()
+    release.set()
+    worker.join(timeout=2)
+
+    assert worker.is_alive() is False
+    assert provider.document_calls == 1
+    assert service.status()["status"] == "lexical_ready"
+    assert service.status()["active_mode"] == "lexical"
+    assert service.status()["embedding_enabled"] is False
+    assert not list(tmp_path.rglob("embeddings.npy"))
+
+
+def test_only_latest_dense_generation_can_become_active(novel_document, tmp_path) -> None:
+    old_started = threading.Event()
+    release_old = threading.Event()
+
+    class OldEmbedding(FakeEmbedding):
+        def embed_documents(self, texts: list[str]) -> list[list[float]]:
+            self.document_calls += 1
+            old_started.set()
+            assert release_old.wait(timeout=2)
+            return [self._vector(text) for text in texts]
+
+    service = RetrievalService(novel_document)
+    old_provider = OldEmbedding()
+    old_generation = service.prepare_dense(model_name="fake-embedding", configured=True)
+    old_worker = threading.Thread(
+        target=service.build_dense_index,
+        kwargs={
+            "provider": old_provider,
+            "model_name": "fake-embedding",
+            "cache_root": tmp_path,
+            "generation": old_generation,
+        },
+    )
+    old_worker.start()
+    assert old_started.wait(timeout=1)
+
+    service.disable_dense()
+    new_provider = FakeEmbedding()
+    new_generation = service.prepare_dense(model_name="fake-embedding", configured=True)
+    service.build_dense_index(
+        new_provider,
+        model_name="fake-embedding",
+        cache_root=tmp_path,
+        generation=new_generation,
+    )
+    release_old.set()
+    old_worker.join(timeout=2)
+
+    assert service.status()["status"] == "hybrid_ready"
+    assert old_provider.document_calls == 1
+    service.search("最早击败的妖王", 3)
+    assert new_provider.query_calls == 1
+    assert old_provider.query_calls == 0
+
+
+def test_dense_build_reports_batch_progress(novel_document, tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "novel_agent.corpus.retrieval.service.EMBEDDING_BATCH_SIZE", 1
+    )
+    second_batch_started = threading.Event()
+    release_second_batch = threading.Event()
+
+    class ProgressiveEmbedding(FakeEmbedding):
+        def embed_documents(self, texts: list[str]) -> list[list[float]]:
+            self.document_calls += 1
+            if self.document_calls == 2:
+                second_batch_started.set()
+                assert release_second_batch.wait(timeout=2)
+            return [self._vector(text) for text in texts]
+
+    service = RetrievalService(novel_document)
+    provider = ProgressiveEmbedding()
+    generation = service.prepare_dense(model_name="fake-embedding", configured=True)
+    worker = threading.Thread(
+        target=service.build_dense_index,
+        kwargs={
+            "provider": provider,
+            "model_name": "fake-embedding",
+            "cache_root": tmp_path,
+            "generation": generation,
+        },
+    )
+    worker.start()
+    assert second_batch_started.wait(timeout=1)
+
+    progress = service.status()["embedding_progress"]
+    assert progress["completed"] == 1
+    assert progress["total"] > progress["completed"]
+    assert 0 < progress["percentage"] < 100
+
+    release_second_batch.set()
+    worker.join(timeout=2)
+    assert service.status()["embedding_progress"]["percentage"] == 100
 
 
 def test_passages_preserve_parent_boundaries(tmp_path) -> None:

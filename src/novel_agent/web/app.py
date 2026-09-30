@@ -18,6 +18,7 @@ from novel_agent.application.service import execute_agent
 from novel_agent.runtime.config import (
     ModelConfig,
     default_max_steps,
+    novel_agent_data_dir,
     structured_output_retries,
 )
 from novel_agent.web.events import TERMINAL_STATUSES
@@ -33,6 +34,10 @@ class RunRequest(BaseModel):
         ge=1,
         le=100,
     )
+
+
+class EmbeddingToggleRequest(BaseModel):
+    enabled: bool
 
 
 def novel_info(item: StoredNovel) -> dict[str, Any]:
@@ -55,14 +60,21 @@ def create_app(
     executor: Executor = execute_agent,
     model_factory: Callable[[], Any] | None = None,
     upload_limit: int = MAX_UPLOAD_BYTES,
+    data_root: str | Path | None = None,
 ) -> FastAPI:
-    store = NovelStore(upload_limit=upload_limit)
+    store = NovelStore(
+        upload_limit=upload_limit,
+        data_root=data_root if data_root is not None else novel_agent_data_dir(),
+    )
     runs = RunManager(executor=executor, model_factory=model_factory)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
-        yield
-        await store.close()
+        await store.open()
+        try:
+            yield
+        finally:
+            await store.close()
 
     app = FastAPI(title="Novel Agent Web", version="0.2.0", lifespan=lifespan)
     app.state.novels = store
@@ -70,6 +82,7 @@ def create_app(
 
     @app.get("/api/config")
     def config_status() -> dict[str, Any]:
+        embedding = store.embedding_config()
         try:
             retries = structured_output_retries()
             config = ModelConfig.from_env()
@@ -78,6 +91,8 @@ def create_app(
                 "model_name": config.model_name,
                 "default_max_steps": min(max(default_max_steps(), 1), 100),
                 "structured_output_retries": retries,
+                "embedding_configured": embedding.enabled,
+                "embedding_model": embedding.model_name or None,
                 "error": None,
             }
         except (RuntimeError, ValueError) as exc:
@@ -86,6 +101,8 @@ def create_app(
                 "model_name": os.getenv("MODEL_NAME", "gpt-4.1-mini"),
                 "default_max_steps": min(max(default_max_steps(), 1), 100),
                 "structured_output_retries": None,
+                "embedding_configured": embedding.enabled,
+                "embedding_model": embedding.model_name or None,
                 "error": str(exc),
             }
 
@@ -95,6 +112,14 @@ def create_app(
             return novel_info(await store.add(file))
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/novels")
+    def list_novels() -> dict[str, Any]:
+        items = store.list()
+        return {
+            "items": [novel_info(item) for item in items],
+            "total": len(items),
+        }
 
     @app.get("/api/novels/{novel_id}/sections")
     def list_sections(
@@ -119,6 +144,17 @@ def create_app(
             return store.get(novel_id).corpus.retrieval_status()
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc.args[0])) from exc
+
+    @app.put("/api/novels/{novel_id}/embedding", status_code=202)
+    async def set_novel_embedding(
+        novel_id: str, request: EmbeddingToggleRequest
+    ) -> dict[str, Any]:
+        try:
+            return await store.set_embedding_enabled(novel_id, request.enabled)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc.args[0])) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.get("/api/novels/{novel_id}/search")
     def search_novel(
@@ -199,6 +235,23 @@ def create_app(
             "run_id": record.run_id,
             "status": record.status,
             "cancel_requested": record.cancel_requested,
+        }
+
+    @app.post("/api/runs/{run_id}/retry", status_code=202)
+    def retry_run(run_id: str) -> dict[str, Any]:
+        try:
+            existing = runs.get(run_id)
+            novel = store.get(existing.novel_id)
+            record = runs.retry(run_id, novel)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc.args[0])) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {
+            "run_id": record.run_id,
+            "status": record.status,
+            "failed_node": record.last_retry_node,
+            "manual_retry_count": record.manual_retry_count,
         }
 
     project_root = Path(__file__).resolve().parents[3]

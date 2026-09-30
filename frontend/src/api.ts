@@ -2,6 +2,7 @@ import type {
   ConfigStatus,
   NovelChunk,
   NovelInfo,
+  NovelPage,
   RetrievalStatus,
   SearchHit,
   SectionPage,
@@ -34,6 +35,8 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 export const api = {
   config: () => request<ConfigStatus>('/api/config'),
 
+  novels: () => request<NovelPage>('/api/novels'),
+
   uploadNovel(file: File) {
     const form = new FormData()
     form.append('file', file)
@@ -49,6 +52,17 @@ export const api = {
   retrievalStatus(novelId: string) {
     return request<RetrievalStatus>(
       `/api/novels/${encodeURIComponent(novelId)}/retrieval-status`,
+    )
+  },
+
+  setEmbeddingEnabled(novelId: string, enabled: boolean) {
+    return request<RetrievalStatus>(
+      `/api/novels/${encodeURIComponent(novelId)}/embedding`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      },
     )
   },
 
@@ -77,5 +91,14 @@ export const api = {
       `/api/runs/${encodeURIComponent(runId)}/cancel`,
       { method: 'POST' },
     )
+  },
+
+  retryRun(runId: string) {
+    return request<{
+      run_id: string
+      status: string
+      failed_node: string
+      manual_retry_count: number
+    }>(`/api/runs/${encodeURIComponent(runId)}/retry`, { method: 'POST' })
   },
 }

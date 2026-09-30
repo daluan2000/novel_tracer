@@ -19,16 +19,15 @@ export function useRun() {
     source = null
   }
 
-  async function start(novelId: string, question: string, maxSteps: number) {
-    closeSource()
-    replaceView({ ...emptyRunView(), status: 'queued' })
-    const created = await api.createRun(novelId, question, maxSteps)
-    runId.value = created.run_id
-    source = new EventSource(`/api/runs/${encodeURIComponent(created.run_id)}/events`)
+  function connect(activeRunId: string, historicalTerminalSequence = 0) {
+    source = new EventSource(`/api/runs/${encodeURIComponent(activeRunId)}/events`)
     source.onmessage = (message) => {
       const event = JSON.parse(message.data) as RunEvent
       Object.assign(view, applyRunEvent({ ...view }, event))
-      if (['complete', 'cancelled', 'error'].includes(event.type)) closeSource()
+      if (
+        event.sequence > historicalTerminalSequence
+        && ['complete', 'cancelled', 'error'].includes(event.type)
+      ) closeSource()
     }
     source.onerror = () => {
       if (!['completed', 'cancelled', 'failed'].includes(view.status)) {
@@ -36,6 +35,31 @@ export function useRun() {
         view.error = '执行进度连接已断开，请确认后端服务仍在运行。'
       }
       closeSource()
+    }
+  }
+
+  async function start(novelId: string, question: string, maxSteps: number) {
+    closeSource()
+    replaceView({ ...emptyRunView(), status: 'queued' })
+    const created = await api.createRun(novelId, question, maxSteps)
+    runId.value = created.run_id
+    connect(created.run_id)
+  }
+
+  async function retry() {
+    if (!runId.value || view.status !== 'failed') return
+    closeSource()
+    const previous = { ...view }
+    const historicalTerminalSequence = view.events[view.events.length - 1]?.sequence ?? 0
+    view.status = 'queued'
+    view.error = null
+    try {
+      await api.retryRun(runId.value)
+      replaceView({ ...emptyRunView(), status: 'queued' })
+      connect(runId.value, historicalTerminalSequence)
+    } catch (error) {
+      replaceView(previous)
+      view.error = error instanceof Error ? error.message : '从失败节点重试失败。'
     }
   }
 
@@ -51,5 +75,5 @@ export function useRun() {
   }
 
   onBeforeUnmount(closeSource)
-  return { view, runId, isRunning, start, stop }
+  return { view, runId, isRunning, start, retry, stop }
 }

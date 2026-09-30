@@ -4,7 +4,7 @@ import { api } from '../api'
 import type { NovelChunk, NovelInfo, SearchHit } from '../types'
 import RetrievalObservability from './RetrievalObservability.vue'
 
-const props = defineProps<{ novel: NovelInfo }>()
+const props = defineProps<{ novel: NovelInfo; retrievalRevision?: number }>()
 const query = ref('')
 const topK = ref(5)
 const results = ref<SearchHit[]>([])
@@ -56,7 +56,7 @@ async function toggleContext(hit: SearchHit) {
 <template>
   <section class="workspace-panel">
     <div class="section-heading"><div><p class="eyebrow">混合检索</p><h2>查找原文</h2></div><span>关键词与语义联合检索</span></div>
-    <RetrievalObservability ref="retrievalObservability" :novel-id="novel.novel_id" />
+    <RetrievalObservability ref="retrievalObservability" :novel-id="novel.novel_id" :refresh-key="retrievalRevision" />
     <form class="search-form" @submit.prevent="search">
       <label class="field grow"><span>关键词（多个词用空格分隔）</span><input v-model="query" placeholder="例如：吕树 吕小鱼" /></label>
       <label class="field compact"><span>结果数</span><select v-model="topK"><option v-for="n in [3, 5, 10, 20]" :key="n" :value="n">{{ n }}</option></select></label>

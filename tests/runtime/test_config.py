@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from novel_agent.runtime.config import EmbeddingConfig, ModelConfig, structured_output_retries
+from novel_agent.runtime.config import (
+    EmbeddingConfig,
+    ModelConfig,
+    novel_agent_data_dir,
+    structured_output_retries,
+)
 
 
 def test_deepseek_defaults_to_disabled_thinking(monkeypatch) -> None:
@@ -89,6 +94,13 @@ def test_embedding_timeout_configuration(monkeypatch) -> None:
 
     assert config.enabled is True
     assert config.request_timeout_seconds == 45.0
+
+
+def test_runtime_data_directory_configuration(monkeypatch, tmp_path) -> None:
+    configured = tmp_path / "novel-data"
+    monkeypatch.setenv("NOVEL_AGENT_DATA_DIR", str(configured))
+
+    assert novel_agent_data_dir() == configured
 
 
 def test_structured_retries_default_and_boundaries(monkeypatch) -> None:

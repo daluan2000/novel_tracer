@@ -79,6 +79,23 @@ def _timeout_executor(_corpus, _question: str, **_kwargs: Any) -> AgentExecution
     raise TimeoutError("vendor response contains super-secret-key")
 
 
+def _resume_once_executor(_corpus, question: str, **kwargs: Any) -> AgentExecutionResult:
+    state = dict(initial_state(question, kwargs["max_steps"]))
+    state["plan"] = [{"task_id": "T1", "description": "保留计划", "status": "in_progress"}]
+    state["current_task_id"] = "T1"
+    if not kwargs["resume"]:
+        kwargs["on_update"]("planner", {"plan": state["plan"]}, state)
+        error = TimeoutError("secret provider detail")
+        error.state = state
+        error.failed_node = "assessor"
+        error.checkpoint_available = True
+        raise error
+    state["plan"][0]["status"] = "completed"
+    state["final_answer"] = "从失败节点恢复完成。"
+    kwargs["on_update"]("assessor", {"plan": state["plan"]}, state)
+    return AgentExecutionResult(state=state)
+
+
 def _sse_events(body: str) -> list[dict[str, Any]]:
     return [
         json.loads(line.removeprefix("data: "))
@@ -97,6 +114,8 @@ def test_config_status_does_not_expose_api_key(monkeypatch) -> None:
     assert response.json()["ready"] is True
     assert response.json()["model_name"] == "test-model"
     assert response.json()["structured_output_retries"] == 2
+    assert response.json()["embedding_configured"] is False
+    assert response.json()["embedding_model"] is None
     assert "super-secret-key" not in response.text
 
 
@@ -131,11 +150,12 @@ def test_upload_structure_search_and_context() -> None:
     assert sections.status_code == 200
     assert sections.json()["items"]
     assert retrieval.status_code == 200
-    assert retrieval.json()["status"] == "degraded"
+    assert retrieval.json()["status"] == "lexical_ready"
     assert retrieval.json()["active_mode"] == "lexical"
-    assert retrieval.json()["error_code"] == "embedding_not_configured"
-    assert retrieval.json()["metrics"]["fallback_count"] == 1
-    assert retrieval.json()["events"][0]["code"] == "embedding_not_configured"
+    assert retrieval.json()["embedding_enabled"] is False
+    assert retrieval.json()["error_code"] is None
+    assert retrieval.json()["metrics"]["fallback_count"] == 0
+    assert retrieval.json()["events"] == []
     assert search.status_code == 200
     assert {"吕树", "吕小鱼"}.issubset(search.json()[0]["matched_terms"])
     assert context.status_code == 200
@@ -167,7 +187,15 @@ def test_upload_builds_dense_index_in_background(monkeypatch, tmp_path) -> None:
     with TestClient(app) as client:
         novel = _upload(client)
         status_url = f"/api/novels/{novel['novel_id']}/retrieval-status"
-        assert client.get(status_url).json()["status"] == "building"
+        assert client.get(status_url).json()["status"] == "lexical_ready"
+        enabled = client.put(
+            f"/api/novels/{novel['novel_id']}/embedding",
+            json={"enabled": True},
+        )
+        assert enabled.status_code == 202
+        building = client.get(status_url).json()
+        assert building["status"] == "building"
+        assert building["embedding_progress"]["percentage"] == 0
         assert started.wait(timeout=1)
 
         release.set()
@@ -179,6 +207,16 @@ def test_upload_builds_dense_index_in_background(monkeypatch, tmp_path) -> None:
 
         assert status["status"] == "hybrid_ready"
         assert status["active_mode"] == "hybrid"
+        assert status["embedding_enabled"] is True
+        assert status["embedding_progress"]["percentage"] == 100
+
+        disabled = client.put(
+            f"/api/novels/{novel['novel_id']}/embedding",
+            json={"enabled": False},
+        )
+        assert disabled.status_code == 202
+        assert disabled.json()["status"] == "lexical_ready"
+        assert disabled.json()["embedding_enabled"] is False
 
 
 def test_upload_validation_and_missing_novel() -> None:
@@ -200,6 +238,20 @@ def test_upload_validation_and_missing_novel() -> None:
     assert too_large.status_code == 400
     assert missing.status_code == 404
     assert missing_retrieval.status_code == 404
+
+
+def test_embedding_toggle_rejects_missing_configuration_and_novel() -> None:
+    with TestClient(create_app(executor=_success_executor)) as client:
+        novel = _upload(client)
+        unavailable = client.put(
+            f"/api/novels/{novel['novel_id']}/embedding",
+            json={"enabled": True},
+        )
+        missing = client.put("/api/novels/missing/embedding", json={"enabled": True})
+
+    assert unavailable.status_code == 409
+    assert "Embedding" in unavailable.json()["detail"]
+    assert missing.status_code == 404
 
 
 def test_run_stream_exposes_normalized_events_only() -> None:
@@ -277,3 +329,55 @@ def test_run_timeout_is_classified_without_exposing_provider_error() -> None:
     assert failure["detail"]["level"] == "error"
     assert failure["detail"]["retryable"] is True
     assert "super-secret-key" not in stream.text
+
+
+def test_failed_run_retries_with_same_id_and_continuous_events() -> None:
+    with TestClient(create_app(executor=_resume_once_executor)) as client:
+        novel = _upload(client)
+        started = client.post(
+            "/api/runs",
+            json={"novel_id": novel["novel_id"], "question": "恢复测试", "max_steps": 5},
+        )
+        run_id = started.json()["run_id"]
+        failed_events = _sse_events(client.get(f"/api/runs/{run_id}/events").text)
+        retried = client.post(f"/api/runs/{run_id}/retry")
+        final_events = _sse_events(client.get(f"/api/runs/{run_id}/events").text)
+
+    assert retried.status_code == 202
+    assert retried.json()["run_id"] == run_id
+    assert retried.json()["failed_node"] == "assessor"
+    assert retried.json()["manual_retry_count"] == 1
+    assert failed_events[-1]["detail"]["resumable"] is True
+    assert [event["sequence"] for event in final_events] == list(range(1, len(final_events) + 1))
+    assert sum(event["node"] == "planner" and event["type"] == "update" for event in final_events) == 1
+    assert any(event["detail"].get("code") == "manual_retry_requested" for event in final_events)
+    assert any(event["detail"].get("code") == "manual_retry_resumed" for event in final_events)
+    assert final_events[-1]["type"] == "complete"
+    assert final_events[-1]["snapshot"]["final_answer"] == "从失败节点恢复完成。"
+
+
+def test_retry_rejects_unknown_non_failed_and_non_resumable_runs() -> None:
+    with TestClient(create_app(executor=_success_executor)) as client:
+        novel = _upload(client)
+        started = client.post(
+            "/api/runs",
+            json={"novel_id": novel["novel_id"], "question": "完成测试", "max_steps": 5},
+        )
+        run_id = started.json()["run_id"]
+        client.get(f"/api/runs/{run_id}/events")
+        completed = client.post(f"/api/runs/{run_id}/retry")
+        missing = client.post("/api/runs/missing/retry")
+
+    with TestClient(create_app(executor=_timeout_executor)) as client:
+        novel = _upload(client)
+        started = client.post(
+            "/api/runs",
+            json={"novel_id": novel["novel_id"], "question": "无节点", "max_steps": 5},
+        )
+        run_id = started.json()["run_id"]
+        client.get(f"/api/runs/{run_id}/events")
+        no_checkpoint = client.post(f"/api/runs/{run_id}/retry")
+
+    assert completed.status_code == 409
+    assert missing.status_code == 404
+    assert no_checkpoint.status_code == 409

@@ -33,6 +33,7 @@ export function applyRunEvent(current: RunViewState, event: RunEvent): RunViewSt
         : event.type === 'error'
           ? 'failed'
           : event.status
+  const resumed = ['manual_retry_requested', 'manual_retry_resumed'].includes(event.detail.code ?? '')
 
   return {
     status,
@@ -40,6 +41,6 @@ export function applyRunEvent(current: RunViewState, event: RunEvent): RunViewSt
     visitedNodes: [...visited],
     events: [...current.events, event],
     snapshot: Object.keys(event.snapshot).length ? (event.snapshot as RunSnapshot) : current.snapshot,
-    error: event.error ?? current.error,
+    error: resumed ? null : (event.error ?? current.error),
   }
 }

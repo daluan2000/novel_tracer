@@ -80,7 +80,7 @@ class NovelCorpus:
 
         return self._retrieval.status()
 
-    def prepare_dense_index(self, config: EmbeddingConfig) -> bool:
+    def prepare_dense_index(self, config: EmbeddingConfig) -> int | None:
         """Mark dense indexing as building, or degraded when it is not configured."""
 
         return self._retrieval.prepare_dense(
@@ -92,6 +92,7 @@ class NovelCorpus:
         self,
         config: EmbeddingConfig,
         cache_root: str | Path = "output/indexes",
+        generation: int | None = None,
     ) -> bool:
         """Build or load the dense index; failures leave lexical search available."""
 
@@ -101,11 +102,28 @@ class NovelCorpus:
                 provider,
                 model_name=config.model_name,
                 cache_root=Path(cache_root),
+                generation=generation,
             )
         except Exception:
             self._retrieval.mark_dense_failed()
             return False
         return True
+
+    def disable_dense_index(self) -> None:
+        """Disable dense retrieval without deleting its on-disk cache."""
+
+        self._retrieval.disable_dense()
+
+    def has_complete_dense_cache(
+        self, config: EmbeddingConfig, cache_root: str | Path = "output/indexes"
+    ) -> bool:
+        """Check whether a complete cache exists for this document and model."""
+
+        if not config.enabled:
+            return False
+        return self._retrieval.has_complete_dense_cache(
+            Path(cache_root), config.model_name
+        )
 
     def read_context(self, chunk_id: str, before: int = 1, after: int = 1) -> list[NovelChunk]:
         """按全书顺序读取目标 Chunk 及其前后相邻块。

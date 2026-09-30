@@ -3,8 +3,9 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { api } from '../api'
 import type { RetrievalStatus } from '../types'
 
-const props = withDefaults(defineProps<{ novelId: string; polling?: boolean }>(), {
+const props = withDefaults(defineProps<{ novelId: string; polling?: boolean; refreshKey?: number }>(), {
   polling: false,
+  refreshKey: 0,
 })
 
 const status = ref<RetrievalStatus | null>(null)
@@ -48,7 +49,7 @@ function formatTime(value: string) {
 }
 
 watch(
-  [() => props.novelId, () => props.polling],
+  [() => props.novelId, () => props.polling, () => props.refreshKey],
   ([novelId], [oldNovelId]) => {
     if (novelId !== oldNovelId) status.value = null
     void refresh()
@@ -83,6 +84,16 @@ defineExpose({ refresh })
         <div><dt>改用关键词检索</dt><dd>{{ status.metrics.fallback_count }}</dd></div>
         <div><dt>最近请求耗时</dt><dd>{{ status.metrics.last_request_elapsed_seconds === null ? '—' : `${status.metrics.last_request_elapsed_seconds.toFixed(2)} 秒` }}</dd></div>
       </dl>
+
+      <div v-if="status.embedding_enabled" class="embedding-progress" aria-live="polite">
+        <div>
+          <strong>{{ status.status === 'building' ? 'Embedding 构建中' : 'Embedding 已构建完成' }}</strong>
+          <span>{{ status.embedding_progress.percentage }}% · {{ status.embedding_progress.completed.toLocaleString() }}/{{ status.embedding_progress.total.toLocaleString() }} 个片段</span>
+        </div>
+        <div class="embedding-progress-track" role="progressbar" aria-label="Embedding 构建进度" :aria-valuenow="status.embedding_progress.percentage" aria-valuemin="0" aria-valuemax="100">
+          <span :style="{ width: `${status.embedding_progress.percentage}%` }"></span>
+        </div>
+      </div>
 
       <div class="anomaly-block">
         <div class="anomaly-title"><strong>异常与回退记录</strong><span>最近 {{ status.events.length }} 条</span></div>
