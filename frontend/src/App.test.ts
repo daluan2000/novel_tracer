@@ -7,7 +7,7 @@ vi.mock('./api', () => ({
   api: {
     config: vi.fn(), novels: vi.fn(), uploadNovel: vi.fn(), sections: vi.fn(),
     search: vi.fn(), context: vi.fn(), retrievalStatus: vi.fn(),
-    createRun: vi.fn(), cancelRun: vi.fn(),
+    setEmbeddingEnabled: vi.fn(), createRun: vi.fn(), cancelRun: vi.fn(),
   },
 }))
 
@@ -17,7 +17,32 @@ describe('App upload workflow', () => {
     localStorage.clear()
     vi.mocked(api.config).mockResolvedValue({
       ready: true, model_name: 'test-model', default_max_steps: 16,
-      structured_output_retries: 2, error: null,
+      structured_output_retries: 2, embedding_configured: true,
+      embedding_model: 'embedding-test', error: null,
+    })
+    vi.mocked(api.retrievalStatus).mockResolvedValue({
+      status: 'lexical_ready', active_mode: 'lexical', embedding_enabled: false,
+      passage_count: 20, embedding_model: null, error_code: null,
+      embedding_progress: { completed: 0, total: 20, percentage: 0 },
+      metrics: {
+        document_request_count: 0, document_text_count: 0, document_input_characters: 0,
+        query_request_count: 0, query_input_characters: 0, query_cache_hit_count: 0,
+        index_cache_hit: null, failed_request_count: 0, fallback_count: 0,
+        last_request_elapsed_seconds: null,
+      },
+      events: [],
+    })
+    vi.mocked(api.setEmbeddingEnabled).mockResolvedValue({
+      status: 'building', active_mode: 'lexical', embedding_enabled: true,
+      passage_count: 20, embedding_model: 'embedding-test', error_code: null,
+      embedding_progress: { completed: 0, total: 20, percentage: 0 },
+      metrics: {
+        document_request_count: 0, document_text_count: 0, document_input_characters: 0,
+        query_request_count: 0, query_input_characters: 0, query_cache_hit_count: 0,
+        index_cache_hit: null, failed_request_count: 0, fallback_count: 0,
+        last_request_elapsed_seconds: null,
+      },
+      events: [],
     })
     vi.mocked(api.sections).mockResolvedValue({ items: [], offset: 0, limit: 50, total: 0 })
     vi.mocked(api.novels).mockResolvedValue({ items: [], total: 0 })
@@ -92,5 +117,40 @@ describe('App upload workflow', () => {
     await flushPromises()
 
     expect(wrapper.findAll('.book-selector option')).toHaveLength(1)
+  })
+
+  it('keeps embedding off by default and enables it for the selected novel', async () => {
+    const saved = await vi.mocked(api.uploadNovel).getMockImplementation()!(new File([], 'ignored.txt'))
+    vi.mocked(api.novels).mockResolvedValue({ items: [saved], total: 1 })
+
+    const wrapper = mount(App)
+    await flushPromises()
+    const toggle = wrapper.find('.embedding-toggle input')
+    expect((toggle.element as HTMLInputElement).checked).toBe(false)
+    expect(wrapper.find('.embedding-toggle').text()).toContain('Embedding 已关闭')
+
+    await toggle.setValue(true)
+    await flushPromises()
+
+    expect(api.setEmbeddingEnabled).toHaveBeenCalledWith('book-1', true)
+    expect((toggle.element as HTMLInputElement).checked).toBe(true)
+    expect(wrapper.find('.embedding-toggle').text()).toContain('正在构建索引')
+    expect(wrapper.find('.embedding-toggle').text()).toContain('0%')
+  })
+
+  it('disables the embedding switch when the backend is not configured', async () => {
+    const saved = await vi.mocked(api.uploadNovel).getMockImplementation()!(new File([], 'ignored.txt'))
+    vi.mocked(api.novels).mockResolvedValue({ items: [saved], total: 1 })
+    vi.mocked(api.config).mockResolvedValue({
+      ready: true, model_name: 'test-model', default_max_steps: 16,
+      structured_output_retries: 2, embedding_configured: false,
+      embedding_model: null, error: null,
+    })
+
+    const wrapper = mount(App)
+    await flushPromises()
+
+    expect(wrapper.find('.embedding-toggle input').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('.embedding-toggle').text()).toContain('Embedding 未配置')
   })
 })

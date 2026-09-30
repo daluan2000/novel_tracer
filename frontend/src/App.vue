@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { api } from './api'
-import type { ConfigStatus, NovelInfo } from './types'
+import type { ConfigStatus, NovelInfo, RetrievalStatus } from './types'
 import AgentWorkspace from './components/AgentWorkspace.vue'
 import SearchPanel from './components/SearchPanel.vue'
 import StructurePanel from './components/StructurePanel.vue'
@@ -18,6 +18,10 @@ const dragging = ref(false)
 const runActive = ref(false)
 const error = ref('')
 const fileInput = ref<HTMLInputElement | null>(null)
+const retrievalStatus = ref<RetrievalStatus | null>(null)
+const embeddingUpdating = ref(false)
+const retrievalRevision = ref(0)
+let retrievalTimer: ReturnType<typeof setTimeout> | null = null
 
 const tabs: Array<{ id: TabId; label: string; index: string }> = [
   { id: 'agent', label: '智能分析', index: '01' },
@@ -41,6 +45,8 @@ onMounted(async () => {
 function selectNovel(selected: NovelInfo) {
   novel.value = selected
   localStorage.setItem(SELECTED_NOVEL_KEY, selected.novel_id)
+  retrievalStatus.value = null
+  void refreshRetrievalStatus(selected.novel_id)
 }
 
 function selectNovelById(novelId: string) {
@@ -77,6 +83,60 @@ function handleDrop(event: DragEvent) {
 function formatNumber(value: number) {
   return new Intl.NumberFormat('zh-CN').format(value)
 }
+
+const embeddingLabel = computed(() => {
+  if (!config.value?.embedding_configured) return 'Embedding 未配置'
+  if (embeddingUpdating.value) return '正在切换…'
+  if (retrievalStatus.value?.status === 'building') {
+    return `正在构建索引 ${retrievalStatus.value.embedding_progress.percentage}%`
+  }
+  if (retrievalStatus.value?.status === 'degraded' && retrievalStatus.value.embedding_enabled) return '启用失败'
+  return retrievalStatus.value?.embedding_enabled ? 'Embedding 已构建完成' : 'Embedding 已关闭'
+})
+
+function scheduleRetrievalRefresh(novelId: string) {
+  if (retrievalTimer) clearTimeout(retrievalTimer)
+  retrievalTimer = null
+  if (retrievalStatus.value?.status === 'building') {
+    retrievalTimer = setTimeout(() => void refreshRetrievalStatus(novelId), 1500)
+  }
+}
+
+async function refreshRetrievalStatus(novelId: string) {
+  try {
+    const status = await api.retrievalStatus(novelId)
+    if (novel.value?.novel_id !== novelId) return
+    retrievalStatus.value = status
+    scheduleRetrievalRefresh(novelId)
+  } catch (cause) {
+    if (novel.value?.novel_id === novelId) {
+      error.value = cause instanceof Error ? cause.message : '检索状态读取失败。'
+    }
+  }
+}
+
+async function toggleEmbedding(event: Event) {
+  if (!novel.value) return
+  const enabled = (event.target as HTMLInputElement).checked
+  const novelId = novel.value.novel_id
+  embeddingUpdating.value = true
+  error.value = ''
+  try {
+    const status = await api.setEmbeddingEnabled(novelId, enabled)
+    if (novel.value?.novel_id === novelId) {
+      retrievalStatus.value = status
+      retrievalRevision.value += 1
+      scheduleRetrievalRefresh(novelId)
+    }
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : 'Embedding 设置更新失败。'
+    await refreshRetrievalStatus(novelId)
+  } finally {
+    embeddingUpdating.value = false
+  }
+}
+
+onBeforeUnmount(() => { if (retrievalTimer) clearTimeout(retrievalTimer) })
 </script>
 
 <template>
@@ -107,9 +167,19 @@ function formatNumber(value: number) {
         <div><span class="book-glyph">文</span><div><strong>{{ novel.filename }}</strong><small>{{ novel.encoding }} · {{ novel.elapsed_seconds.toFixed(2) }} 秒完成解析</small></div></div>
         <label class="book-selector">
           <span>已保存小说</span>
-          <select :value="novel.novel_id" :disabled="runActive || uploading" @change="selectNovelById(($event.target as HTMLSelectElement).value)">
+          <select :value="novel.novel_id" :disabled="runActive || uploading || embeddingUpdating" @change="selectNovelById(($event.target as HTMLSelectElement).value)">
             <option v-for="item in novels" :key="item.novel_id" :value="item.novel_id">{{ item.filename }}</option>
           </select>
+        </label>
+        <label class="embedding-toggle" :class="{ unavailable: !config?.embedding_configured }">
+          <input
+            type="checkbox"
+            :checked="retrievalStatus?.embedding_enabled ?? false"
+            :disabled="!config?.embedding_configured || runActive || uploading || embeddingUpdating"
+            @change="toggleEmbedding"
+          />
+          <span class="toggle-track"><i></i></span>
+          <span><strong>{{ embeddingLabel }}</strong><small>{{ config?.embedding_model || '请先配置 EMBEDDING_MODEL' }}</small></span>
         </label>
         <dl><div><dt>字符</dt><dd>{{ formatNumber(novel.character_count) }}</dd></div><div><dt>行</dt><dd>{{ formatNumber(novel.line_count) }}</dd></div><div><dt>章节</dt><dd>{{ formatNumber(novel.section_count) }}</dd></div><div><dt>Chunk</dt><dd>{{ formatNumber(novel.chunk_count) }}</dd></div></dl>
       </section>
@@ -119,9 +189,9 @@ function formatNumber(value: number) {
           <button v-for="tab in tabs" :key="tab.id" :class="{ active: activeTab === tab.id }" :disabled="!novel" @click="activeTab = tab.id"><span>{{ tab.index }}</span>{{ tab.label }}</button>
         </nav>
         <template v-if="novel">
-          <AgentWorkspace v-show="activeTab === 'agent'" :novel="novel" :config="config" @running-change="runActive = $event" />
+          <AgentWorkspace v-show="activeTab === 'agent'" :novel="novel" :config="config" :retrieval-revision="retrievalRevision" @running-change="runActive = $event" />
           <StructurePanel v-show="activeTab === 'structure'" :novel="novel" />
-          <SearchPanel v-show="activeTab === 'search'" :novel="novel" />
+          <SearchPanel v-show="activeTab === 'search'" :novel="novel" :retrieval-revision="retrievalRevision" />
         </template>
         <div v-else class="onboarding"><span>01</span><h2>先导入一部小说</h2><p>导入后即可查看章节结构、检索原文，并开展基于证据的智能分析。</p></div>
       </section>

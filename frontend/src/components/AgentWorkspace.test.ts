@@ -3,12 +3,15 @@ import { describe, expect, it, vi } from 'vitest'
 import type { ConfigStatus, NovelInfo } from '../types'
 import AgentWorkspace from './AgentWorkspace.vue'
 
+const runActions = vi.hoisted(() => ({ retry: vi.fn() }))
+
 vi.mock('../api', () => ({
   api: {
     context: vi.fn(),
     retrievalStatus: vi.fn().mockResolvedValue({
-      status: 'hybrid_ready', active_mode: 'hybrid', passage_count: 20,
+      status: 'hybrid_ready', active_mode: 'hybrid', embedding_enabled: true, passage_count: 20,
       embedding_model: 'embedding-test', error_code: null,
+      embedding_progress: { completed: 20, total: 20, percentage: 100 },
       metrics: {
         document_request_count: 2, document_text_count: 20,
         document_input_characters: 8000, query_request_count: 1,
@@ -26,12 +29,12 @@ vi.mock('../composables/useRun', async () => {
   return {
     useRun: () => ({
       view: reactive({
-        status: 'running', activeNode: 'assessor', visitedNodes: ['planner', 'tools'],
-        error: null,
+        status: 'failed', activeNode: 'assessor', visitedNodes: ['planner', 'tools'],
+        error: '模型返回格式无效。',
         events: [{
-          sequence: 1, timestamp: '2026-09-28T00:00:00Z', type: 'status', status: 'running',
-          node: 'assessor', error: null, snapshot: {},
-          detail: { label: '结构化输出失败，正在重试', diagnostic_code: 'structured_output_retry', level: 'warning' },
+          sequence: 1, timestamp: '2026-09-28T00:00:00Z', type: 'error', status: 'failed',
+          node: 'assessor', error: '模型返回格式无效。', snapshot: {},
+          detail: { label: '结构化输出失败', diagnostic_code: 'structured_output_retry', level: 'error', resumable: true },
         }],
         snapshot: {
           plan: [], current_task_id: null, evidence: [], hypotheses: [],
@@ -51,7 +54,7 @@ vi.mock('../composables/useRun', async () => {
           },
         },
       }),
-      isRunning: ref(false), start: vi.fn(), stop: vi.fn(), runId: ref('run-1'),
+      isRunning: ref(false), start: vi.fn(), retry: runActions.retry, stop: vi.fn(), runId: ref('run-1'),
     }),
   }
 })
@@ -68,7 +71,8 @@ const novel: NovelInfo = {
 }
 const config: ConfigStatus = {
   ready: true, model_name: 'test-model', default_max_steps: 16,
-  structured_output_retries: 2, error: null,
+  structured_output_retries: 2, embedding_configured: true,
+  embedding_model: 'embedding-test', error: null,
 }
 
 describe('AgentWorkspace observability', () => {
@@ -81,6 +85,19 @@ describe('AgentWorkspace observability', () => {
     expect(wrapper.text()).toContain('推理 Token')
     expect(wrapper.text()).toContain('structured_output_retry')
     expect(wrapper.text()).toContain('语义检索用量与运行状态')
+    expect(wrapper.text()).toContain('Embedding 已构建完成')
+    expect(wrapper.text()).toContain('100%')
     expect(wrapper.text()).not.toContain('证据型解读')
+  })
+
+  it('offers retry from the failed node', async () => {
+    const wrapper = mount(AgentWorkspace, { props: { novel, config } })
+    await flushPromises()
+
+    const button = wrapper.findAll('button').find((item) => item.text().includes('从 Assessor 重试'))
+    expect(button).toBeDefined()
+    await button!.trigger('click')
+    expect(runActions.retry).toHaveBeenCalledOnce()
+    expect(wrapper.text()).toContain('重新分析')
   })
 })

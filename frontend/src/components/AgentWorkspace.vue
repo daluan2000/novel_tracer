@@ -8,14 +8,14 @@ import type { ConfigStatus, Evidence, NovelChunk, NovelInfo } from '../types'
 import FlowGraph from './FlowGraph.vue'
 import RetrievalObservability from './RetrievalObservability.vue'
 
-const props = defineProps<{ novel: NovelInfo; config: ConfigStatus | null }>()
+const props = defineProps<{ novel: NovelInfo; config: ConfigStatus | null; retrievalRevision?: number }>()
 const emit = defineEmits<{ 'running-change': [running: boolean] }>()
 const question = ref('')
 const maxSteps = ref(props.config?.default_max_steps ?? 16)
 const localError = ref('')
 const contexts = reactive<Record<string, NovelChunk[]>>({})
 const openEvidence = ref<string | null>(null)
-const { view, isRunning, start, stop } = useRun()
+const { view, isRunning, start, retry, stop } = useRun()
 const markdown = new MarkdownIt({ html: false, linkify: true, breaks: true })
 const statusNames: Record<string, string> = {
   idle: '尚未开始', queued: '等待开始', running: '正在分析', stopping: '正在停止',
@@ -43,6 +43,9 @@ const progress = computed(() => {
 })
 const tokenUsage = computed(() => view.snapshot?.metrics.token_usage)
 const tokenUsageByNode = computed(() => Object.entries(tokenUsage.value?.by_node ?? {}))
+const failedEvent = computed(() => [...view.events].reverse().find((event) => event.type === 'error'))
+const canRetry = computed(() => view.status === 'failed' && Boolean(failedEvent.value?.detail.resumable))
+const failedNodeName = computed(() => failedEvent.value?.node ? nodeName(failedEvent.value.node) : '失败节点')
 const runAnomalies = computed(() => {
   const items: Array<{ key: string; level: string; code: string; message: string; timestamp?: string }> = []
   for (const event of view.events) {
@@ -108,6 +111,11 @@ async function begin() {
   }
 }
 
+async function retryFailedNode() {
+  localError.value = ''
+  await retry()
+}
+
 async function toggleEvidence(evidence: Evidence) {
   if (openEvidence.value === evidence.evidence_id) {
     openEvidence.value = null
@@ -129,7 +137,8 @@ async function toggleEvidence(evidence: Evidence) {
     <div class="question-box">
       <label class="field grow"><span>想了解什么</span><textarea v-model="question" rows="3" placeholder="例如：分析人物关系如何变化，并给出关键阶段、原文依据和反面证据。" :disabled="isRunning" /></label>
       <label class="field step-field"><span>最多调查步数</span><input v-model.number="maxSteps" type="number" min="1" max="100" :disabled="isRunning" /></label>
-      <button v-if="!isRunning" class="button primary start-button" @click="begin">开始分析 <span aria-hidden="true">→</span></button>
+      <button v-if="canRetry && !isRunning" class="button secondary start-button" @click="retryFailedNode">从 {{ failedNodeName }} 重试</button>
+      <button v-if="!isRunning" class="button primary start-button" @click="begin">{{ view.status === 'failed' ? '重新分析' : '开始分析' }} <span aria-hidden="true">→</span></button>
       <button v-else class="button danger start-button" :disabled="view.status === 'stopping'" @click="stop">{{ view.status === 'stopping' ? '正在结束当前步骤…' : '停止分析' }}</button>
     </div>
     <p v-if="localError || view.error" class="form-error" role="alert">{{ localError || view.error }}</p>
@@ -199,7 +208,7 @@ async function toggleEvidence(evidence: Evidence) {
       </section>
     </div>
 
-    <RetrievalObservability :novel-id="novel.novel_id" :polling="isRunning" />
+    <RetrievalObservability :novel-id="novel.novel_id" :polling="isRunning" :refresh-key="retrievalRevision" />
 
     <div v-if="view.snapshot?.final_answer" class="answer-layout answer-only">
       <article class="answer-card">

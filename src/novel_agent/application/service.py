@@ -6,13 +6,13 @@ from pathlib import Path
 from typing import Any, Callable
 
 from langchain_core.language_models.chat_models import BaseChatModel
+from langgraph.checkpoint.memory import InMemorySaver
 
 from novel_agent.agent.graph import build_agent_graph
 from novel_agent.agent.state import initial_state
 from novel_agent.agent.tools import build_tools
 from novel_agent.corpus.repository import NovelCorpus
 from novel_agent.runtime.config import ModelConfig
-from novel_agent.runtime.structured_output import StructuredOutputError
 from novel_agent.runtime.tracing import TraceWriter, add_model_usage, empty_token_usage
 
 
@@ -26,6 +26,20 @@ class LoadedCorpus:
 class AgentExecutionResult:
     state: dict[str, Any]
     cancelled: bool = False
+
+
+@dataclass
+class ExecutionTelemetry:
+    """Metrics that must survive manual resumptions of the same run."""
+
+    structured_retry_count: int = 0
+    content_fallback_count: int = 0
+    model_call_count: int = 0
+    token_usage: dict[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        if self.token_usage is None:
+            self.token_usage = empty_token_usage()
 
 
 AgentUpdateCallback = Callable[[str, dict[str, Any], dict[str, Any]], None]
@@ -51,6 +65,9 @@ def execute_agent(
     on_diagnostic: AgentDiagnosticCallback | None = None,
     should_cancel: CancelCheck | None = None,
     structured_retries: int | None = None,
+    checkpointer: InMemorySaver | None = None,
+    resume: bool = False,
+    telemetry: ExecutionTelemetry | None = None,
 ) -> AgentExecutionResult:
     """执行一次 Agent 图，并把节点级事件暴露给 Web 层。
 
@@ -67,27 +84,24 @@ def execute_agent(
     }
     trace = TraceWriter(trace_path) if trace_path is not None else None
     current_state: dict[str, Any] = dict(initial_state(question, max_steps))
-    retry_count = 0
-    fallback_count = 0
-    model_call_count = 0
-    token_usage = empty_token_usage()
+    execution_telemetry = telemetry or ExecutionTelemetry()
 
     def state_with_diagnostics(state: dict[str, Any]) -> dict[str, Any]:
         """把回调在图外统计的指标投影到对外可见状态。"""
 
         enriched = dict(state)
-        enriched["structured_retry_count"] = retry_count
-        enriched["content_fallback_count"] = fallback_count
-        enriched["model_call_count"] = model_call_count
-        enriched["token_usage"] = token_usage
+        enriched["structured_retry_count"] = execution_telemetry.structured_retry_count
+        enriched["content_fallback_count"] = execution_telemetry.content_fallback_count
+        enriched["model_call_count"] = execution_telemetry.model_call_count
+        enriched["token_usage"] = execution_telemetry.token_usage or empty_token_usage()
         return enriched
 
     def handle_diagnostic(diagnostic: dict[str, Any]) -> None:
-        nonlocal retry_count, fallback_count, current_state
+        nonlocal current_state
         if diagnostic.get("diagnostic_code") == "structured_output_retry":
-            retry_count += 1
+            execution_telemetry.structured_retry_count += 1
         elif diagnostic.get("diagnostic_code") == "content_json_fallback":
-            fallback_count += 1
+            execution_telemetry.content_fallback_count += 1
         current_state = state_with_diagnostics(current_state)
         if trace is not None:
             trace.append("model_diagnostic", diagnostic)
@@ -95,9 +109,11 @@ def execute_agent(
             on_diagnostic(dict(diagnostic), dict(current_state))
 
     def handle_model_usage(usage: dict[str, Any]) -> None:
-        nonlocal model_call_count, token_usage, current_state
-        model_call_count += 1
-        token_usage = add_model_usage(token_usage, usage)
+        nonlocal current_state
+        execution_telemetry.model_call_count += 1
+        execution_telemetry.token_usage = add_model_usage(
+            execution_telemetry.token_usage or empty_token_usage(), usage
+        )
         current_state = state_with_diagnostics(current_state)
         if trace is not None:
             trace.append("model_usage", usage)
@@ -111,7 +127,14 @@ def execute_agent(
         structured_retries=structured_retries,
         on_diagnostic=handle_diagnostic,
         on_model_usage=handle_model_usage,
+        checkpointer=checkpointer,
     )
+
+    if resume:
+        resumed = graph.get_state(config)
+        if not resumed.values or not resumed.next:
+            raise RuntimeError("任务没有可恢复的失败节点。")
+        current_state = state_with_diagnostics(dict(resumed.values))
 
     if should_cancel and should_cancel():
         return AgentExecutionResult(state=current_state, cancelled=True)
@@ -120,7 +143,7 @@ def execute_agent(
         # updates 模式每经过一个节点就产生一次 {node_name: changed_fields}。
         # get_state 再从 checkpoint 取得合并后的完整状态，方便 UI 画时间线。
         for event in graph.stream(
-            initial_state(question, max_steps),
+            None if resume else initial_state(question, max_steps),
             config=config,
             stream_mode="updates",
         ):
@@ -133,11 +156,20 @@ def execute_agent(
                 # 取消发生在节点边界；不会在一次正在进行的模型请求中强行中断。
                 if should_cancel and should_cancel():
                     return AgentExecutionResult(state=current_state, cancelled=True)
-    except StructuredOutputError as exc:
-        # 把失败时的 checkpoint 附到异常上，Web 层仍能展示已经完成的步骤。
-        checkpoint = dict(graph.get_state(config).values)
-        current_state = state_with_diagnostics(checkpoint or current_state)
-        exc.state = current_state
+    except Exception as exc:
+        # LangGraph 会在节点开始前保存 checkpoint。把失败节点和当时的状态附到
+        # 原异常，Web 层既能展示现场，也能在用户确认后从该节点继续。
+        try:
+            snapshot = graph.get_state(config)
+            checkpoint_state = dict(snapshot.values)
+            failed_node = str(snapshot.next[0]) if snapshot.next else None
+        except Exception:
+            checkpoint_state = {}
+            failed_node = None
+        current_state = state_with_diagnostics(checkpoint_state or current_state)
+        setattr(exc, "state", current_state)
+        setattr(exc, "failed_node", failed_node)
+        setattr(exc, "checkpoint_available", bool(failed_node and checkpoint_state))
         raise
 
     return AgentExecutionResult(

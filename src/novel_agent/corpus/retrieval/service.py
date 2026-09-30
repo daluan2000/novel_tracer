@@ -81,6 +81,10 @@ class RetrievalService:
         self._dense_matrix: np.ndarray | None = None
         self._embedding_provider: EmbeddingProvider | None = None
         self._embedding_model: str | None = None
+        self._embedding_enabled = False
+        self._dense_generation = 0
+        self._build_completed_texts = 0
+        self._build_total_texts = len(self.passages)
         self._status = "lexical_ready"
         self._active_mode = "lexical"
         self._error_code: str | None = None
@@ -148,21 +152,35 @@ class RetrievalService:
             return {
                 "status": self._status,
                 "active_mode": self._active_mode,
+                "embedding_enabled": self._embedding_enabled,
                 "passage_count": len(self.passages),
                 "embedding_model": self._embedding_model,
                 "error_code": self._error_code,
+                "embedding_progress": {
+                    "completed": self._build_completed_texts,
+                    "total": self._build_total_texts,
+                    "percentage": (
+                        round(self._build_completed_texts * 100 / self._build_total_texts)
+                        if self._build_total_texts
+                        else 100
+                    ),
+                },
                 "metrics": dict(self._metrics),
                 "events": [dict(event) for event in self._events],
             }
 
-    def prepare_dense(self, *, model_name: str, configured: bool) -> bool:
+    def prepare_dense(self, *, model_name: str, configured: bool) -> int | None:
         with self._lock:
+            self._dense_generation += 1
+            generation = self._dense_generation
             self._embedding_model = model_name or None
             self._dense_matrix = None
             self._embedding_provider = None
             self._query_cache.clear()
             self._active_mode = "lexical"
+            self._build_completed_texts = 0
             if not configured:
+                self._embedding_enabled = False
                 self._status = "degraded"
                 self._error_code = "embedding_not_configured"
                 self._metrics["fallback_count"] += 1
@@ -173,13 +191,43 @@ class RetrievalService:
                     operation="index_build",
                     fallback="bm25",
                 )
-                return False
+                return None
+            self._embedding_enabled = True
             self._status = "building"
             self._error_code = None
-            return True
+            return generation
+
+    def disable_dense(self) -> None:
+        """Immediately return to lexical search and invalidate in-flight builds."""
+
+        with self._lock:
+            was_enabled = self._embedding_enabled
+            self._dense_generation += 1
+            self._embedding_enabled = False
+            self._dense_matrix = None
+            self._embedding_provider = None
+            self._embedding_model = None
+            self._query_cache.clear()
+            self._build_completed_texts = 0
+            self._status = "lexical_ready"
+            self._active_mode = "lexical"
+            self._error_code = None
+        if was_enabled:
+            self._record_event(
+                level="info",
+                code="embedding_disabled",
+                message="已关闭语义检索，当前仅使用关键词检索。",
+                operation="configuration",
+            )
+
+    def _dense_build_is_current(self, generation: int) -> bool:
+        with self._lock:
+            return self._embedding_enabled and generation == self._dense_generation
 
     def mark_dense_failed(self) -> None:
         with self._lock:
+            if not self._embedding_enabled:
+                return
             already_recorded = (
                 self._status == "degraded"
                 and self._error_code == "embedding_build_failed"
@@ -231,6 +279,11 @@ class RetrievalService:
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             return None
 
+    def has_complete_dense_cache(self, cache_root: Path, model_name: str) -> bool:
+        """Return whether the current document/model has a complete valid matrix."""
+
+        return self._load_cached_matrix(cache_root, model_name) is not None
+
     def _write_cache(self, cache_root: Path, model_name: str, matrix: np.ndarray) -> None:
         directory = self._cache_directory(cache_root, model_name)
         directory.mkdir(parents=True, exist_ok=True)
@@ -272,7 +325,13 @@ class RetrievalService:
         *,
         model_name: str,
         cache_root: Path,
+        generation: int | None = None,
     ) -> None:
+        if generation is None:
+            with self._lock:
+                generation = self._dense_generation
+        if not self._dense_build_is_current(generation):
+            return
         cache_directory = self._cache_directory(cache_root, model_name)
         cache_artifacts_exist = (
             (cache_directory / "metadata.json").exists()
@@ -281,6 +340,20 @@ class RetrievalService:
         matrix = self._load_cached_matrix(cache_root, model_name)
         with self._lock:
             self._metrics["index_cache_hit"] = matrix is not None
+            cache_is_current = (
+                matrix is not None
+                and self._embedding_enabled
+                and generation == self._dense_generation
+            )
+            if cache_is_current:
+                self._build_completed_texts = self._build_total_texts
+        if cache_is_current:
+            self._record_event(
+                level="info",
+                code="embedding_cache_loaded",
+                message="完整语义索引缓存已加载，Embedding 已构建完成。",
+                operation="index_build",
+            )
         if matrix is None and cache_artifacts_exist:
             self._record_event(
                 level="warning",
@@ -292,9 +365,14 @@ class RetrievalService:
             last_error: Exception | None = None
             for _attempt in range(3):
                 try:
+                    with self._lock:
+                        if generation == self._dense_generation:
+                            self._build_completed_texts = 0
                     vectors: list[list[float]] = []
                     texts = [passage.text for passage in self.passages]
                     for start in range(0, len(texts), EMBEDDING_BATCH_SIZE):
+                        if not self._dense_build_is_current(generation):
+                            return
                         batch = texts[start : start + EMBEDDING_BATCH_SIZE]
                         started_at = time.perf_counter()
                         failed = False
@@ -313,11 +391,23 @@ class RetrievalService:
                                 elapsed_seconds=time.perf_counter() - started_at,
                                 failed=failed,
                             )
+                        if not self._dense_build_is_current(generation):
+                            return
                         vectors.extend(embedded)
+                        with self._lock:
+                            if generation == self._dense_generation:
+                                self._build_completed_texts = min(
+                                    self._build_total_texts,
+                                    self._build_completed_texts + len(batch),
+                                )
                     matrix = self._normalize_matrix(vectors)
+                    if not self._dense_build_is_current(generation):
+                        return
                     self._write_cache(cache_root, model_name, matrix)
                     break
                 except Exception as exc:  # Provider exceptions vary by SDK/vendor.
+                    if not self._dense_build_is_current(generation):
+                        return
                     last_error = exc
                     timed_out = _is_timeout_error(exc)
                     self._record_event(
@@ -339,12 +429,15 @@ class RetrievalService:
                 raise RuntimeError("向量索引构建失败。") from last_error
 
         with self._lock:
+            if not self._embedding_enabled or generation != self._dense_generation:
+                return
             self._dense_matrix = matrix
             self._embedding_provider = provider
             self._embedding_model = model_name
             self._status = "hybrid_ready"
             self._active_mode = "hybrid"
             self._error_code = None
+            self._build_completed_texts = self._build_total_texts
             self._query_cache.clear()
 
     def _lexical_ranking(self, query: str, terms: list[str]) -> list[int]:

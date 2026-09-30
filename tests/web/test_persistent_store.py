@@ -97,6 +97,13 @@ def test_dense_embedding_cache_is_reused_after_service_restart(
 
     with TestClient(create_app(data_root=data_root)) as client:
         novel = _upload(client, "cached.txt")
+        initial = client.get(f"/api/novels/{novel['novel_id']}/retrieval-status").json()
+        assert initial["status"] == "lexical_ready"
+        assert initial["embedding_enabled"] is False
+        client.put(
+            f"/api/novels/{novel['novel_id']}/embedding",
+            json={"enabled": True},
+        )
         first_status = _wait_for_status(client, novel["novel_id"], "hybrid_ready")
         assert first_status["metrics"]["index_cache_hit"] is False
         first_call_count = provider.document_calls
@@ -107,8 +114,14 @@ def test_dense_embedding_cache_is_reused_after_service_restart(
         second_status = _wait_for_status(client, novel["novel_id"], "hybrid_ready")
 
         assert listed["items"][0]["novel_id"] == novel["novel_id"]
+        assert second_status["embedding_enabled"] is True
+        assert second_status["embedding_progress"]["percentage"] == 100
         assert second_status["metrics"]["index_cache_hit"] is True
         assert second_status["metrics"]["document_request_count"] == 0
+        assert any(
+            event["code"] == "embedding_cache_loaded"
+            for event in second_status["events"]
+        )
         assert provider.document_calls == first_call_count
 
 

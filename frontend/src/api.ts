@@ -55,6 +55,17 @@ export const api = {
     )
   },
 
+  setEmbeddingEnabled(novelId: string, enabled: boolean) {
+    return request<RetrievalStatus>(
+      `/api/novels/${encodeURIComponent(novelId)}/embedding`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      },
+    )
+  },
+
   search(novelId: string, query: string, topK: number) {
     const params = new URLSearchParams({ q: query, top_k: String(topK) })
     return request<SearchHit[]>(`/api/novels/${encodeURIComponent(novelId)}/search?${params}`)
@@ -80,5 +91,14 @@ export const api = {
       `/api/runs/${encodeURIComponent(runId)}/cancel`,
       { method: 'POST' },
     )
+  },
+
+  retryRun(runId: string) {
+    return request<{
+      run_id: string
+      status: string
+      failed_node: string
+      manual_retry_count: number
+    }>(`/api/runs/${encodeURIComponent(runId)}/retry`, { method: 'POST' })
   },
 }

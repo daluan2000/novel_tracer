@@ -56,4 +56,20 @@ describe('run event reducer', () => {
     expect(retry.activeNode).toBe('assessor')
     expect(retry.events).toHaveLength(1)
   })
+
+  it('moves a failed run back to queued and clears its error on manual retry', () => {
+    const failed = applyRunEvent(emptyRunView(), event({
+      type: 'error', status: 'failed', node: 'assessor', error: 'boom',
+      detail: { retryable: true, resumable: true },
+    }))
+    const retried = applyRunEvent(failed, event({
+      sequence: 2, type: 'status', status: 'queued', node: 'assessor', error: null,
+      detail: { code: 'manual_retry_requested', manual_retry_count: 1 },
+    }))
+
+    expect(retried.status).toBe('queued')
+    expect(retried.activeNode).toBe('assessor')
+    expect(retried.error).toBeNull()
+    expect(retried.events).toHaveLength(2)
+  })
 })

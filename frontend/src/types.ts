@@ -3,6 +3,8 @@ export interface ConfigStatus {
   model_name: string
   default_max_steps: number
   structured_output_retries: number | null
+  embedding_configured: boolean
+  embedding_model: string | null
   error: string | null
 }
 
@@ -64,9 +66,15 @@ export interface SearchHit {
 export interface RetrievalStatus {
   status: 'lexical_ready' | 'building' | 'hybrid_ready' | 'degraded'
   active_mode: 'lexical' | 'hybrid'
+  embedding_enabled: boolean
   passage_count: number
   embedding_model: string | null
   error_code: string | null
+  embedding_progress: {
+    completed: number
+    total: number
+    percentage: number
+  }
   metrics: EmbeddingMetrics
   events: ObservabilityEvent[]
 }
@@ -193,6 +201,8 @@ export interface RunEvent {
     failure_reason?: string
     code?: string
     retryable?: boolean
+    resumable?: boolean
+    manual_retry_count?: number
     level?: 'info' | 'warning' | 'error'
     operation?: string
   }

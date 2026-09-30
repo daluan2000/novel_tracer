@@ -75,6 +75,11 @@ class NovelStore:
             )
             return EmbeddingConfig(model_name="", api_key="")
 
+    def embedding_config(self) -> EmbeddingConfig:
+        """Return safe runtime capability information without exposing credentials."""
+
+        return self._embedding_config()
+
     @staticmethod
     def _validate_manifest(directory: Path, manifest: Any) -> dict[str, Any]:
         if not isinstance(manifest, dict):
@@ -156,19 +161,30 @@ class NovelStore:
         item: StoredNovel,
         config: EmbeddingConfig,
     ) -> None:
-        if not item.corpus.prepare_dense_index(config):
-            return
         if item.novel_id in self._index_tasks:
             return
-        task = asyncio.create_task(self._build_dense_index(item, config))
+        status = item.corpus.retrieval_status()
+        if status["embedding_enabled"] and status["status"] == "hybrid_ready":
+            return
+        generation = item.corpus.prepare_dense_index(config)
+        if generation is None:
+            return
+        task = asyncio.create_task(self._build_dense_index(item, config, generation))
         self._index_tasks[item.novel_id] = task
 
         def discard(completed: asyncio.Task[None], novel_id: str = item.novel_id) -> None:
-            self._index_tasks.pop(novel_id, None)
+            if self._index_tasks.get(novel_id) is completed:
+                self._index_tasks.pop(novel_id, None)
             if not completed.cancelled() and completed.exception() is not None:
                 logger.error("Unexpected dense-index task failure for novel %s", novel_id)
 
         task.add_done_callback(discard)
+
+    def _enable_cached_dense_index(
+        self, item: StoredNovel, config: EmbeddingConfig
+    ) -> None:
+        if item.corpus.has_complete_dense_cache(config, self.index_cache_root):
+            self._schedule_dense_index(item, config)
 
     async def open(self) -> None:
         """Restore persisted novels and start validation/loading of dense indexes."""
@@ -203,11 +219,13 @@ class NovelStore:
                     item.filename,
                 )
                 continue
-            self._schedule_dense_index(item, config)
+            self._enable_cached_dense_index(item, config)
         self._opened = True
 
     async def close(self) -> None:
         tasks = list(self._index_tasks.values())
+        for item in self._items.values():
+            item.corpus.disable_dense_index()
         for task in tasks:
             task.cancel()
         if tasks:
@@ -221,12 +239,14 @@ class NovelStore:
         self,
         item: StoredNovel,
         config: EmbeddingConfig,
+        generation: int,
     ) -> None:
         async with self._index_semaphore:
             await asyncio.to_thread(
                 item.corpus.build_dense_index,
                 config,
                 self.index_cache_root,
+                generation,
             )
 
     async def add(self, upload: UploadFile) -> StoredNovel:
@@ -295,7 +315,7 @@ class NovelStore:
                 )
                 self._register(item)
 
-            self._schedule_dense_index(item, self._embedding_config())
+            self._enable_cached_dense_index(item, self._embedding_config())
             return item
         except Exception:
             staging_path.unlink(missing_ok=True)
@@ -316,3 +336,20 @@ class NovelStore:
             return self._items[novel_id]
         except KeyError as exc:
             raise KeyError("小说不存在，请重新选择或上传。") from exc
+
+    async def set_embedding_enabled(self, novel_id: str, enabled: bool) -> dict[str, Any]:
+        """Enable or disable dense retrieval for one in-memory novel session."""
+
+        item = self.get(novel_id)
+        if enabled:
+            config = self._embedding_config()
+            if not config.enabled:
+                raise ValueError("Embedding 模型或访问凭据未配置。")
+            self._schedule_dense_index(item, config)
+        else:
+            item.corpus.disable_dense_index()
+            task = self._index_tasks.pop(novel_id, None)
+            if task is not None:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+        return item.corpus.retrieval_status()

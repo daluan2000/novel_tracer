@@ -9,7 +9,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from novel_agent.application.service import AgentExecutionResult, execute_agent
+from langgraph.checkpoint.memory import InMemorySaver
+
+from novel_agent.application.service import (
+    AgentExecutionResult,
+    ExecutionTelemetry,
+    execute_agent,
+)
 from novel_agent.runtime.structured_output import StructuredOutputError
 from novel_agent.web.events import (
     NODE_LABELS,
@@ -58,6 +64,12 @@ class RunRecord:
     events: list[dict[str, Any]] = field(default_factory=list)
     snapshot: dict[str, Any] = field(default_factory=dict)
     cancel_requested: bool = False
+    failed_node: str | None = None
+    last_retry_node: str | None = None
+    retryable: bool = False
+    manual_retry_count: int = 0
+    checkpointer: InMemorySaver = field(default_factory=InMemorySaver, repr=False)
+    telemetry: ExecutionTelemetry = field(default_factory=ExecutionTelemetry, repr=False)
     condition: threading.Condition = field(default_factory=threading.Condition)
 
     def emit(
@@ -124,16 +136,26 @@ class RunManager:
         record.emit("status", detail={"label": "任务已进入队列"})
         worker = threading.Thread(
             target=self._run,
-            args=(record, novel),
+            args=(record, novel, False),
             daemon=True,
             name=f"novel-agent-{run_id}",
         )
         worker.start()
         return record
 
-    def _run(self, record: RunRecord, novel: StoredNovel) -> None:
+    def _run(self, record: RunRecord, novel: StoredNovel, resume: bool) -> None:
         record.status = "running"
-        record.emit("status", detail={"label": "Agent 开始运行"})
+        started_detail: dict[str, Any] = {
+            "label": "正在从失败节点恢复执行" if resume else "Agent 开始运行",
+            "manual_retry_count": record.manual_retry_count,
+        }
+        if resume:
+            started_detail.update(code="manual_retry_resumed", level="info")
+        record.emit(
+            "status",
+            node=record.failed_node if resume else None,
+            detail=started_detail,
+        )
 
         def on_update(node: str, update: dict[str, Any], state: dict[str, Any]) -> None:
             snapshot = public_snapshot(state)
@@ -187,6 +209,9 @@ class RunManager:
                 on_update=on_update,
                 on_diagnostic=on_diagnostic,
                 should_cancel=lambda: record.cancel_requested,
+                checkpointer=record.checkpointer,
+                resume=resume,
+                telemetry=record.telemetry,
                 **kwargs,
             )
             snapshot = public_snapshot(result.state)
@@ -199,6 +224,8 @@ class RunManager:
                 )
             else:
                 record.status = "completed"
+                record.failed_node = None
+                record.retryable = False
                 termination = snapshot.get("termination_reason")
                 terminal_detail: dict[str, Any] = {"label": "分析完成"}
                 if termination == "max_steps_reached":
@@ -220,6 +247,10 @@ class RunManager:
                 )
         except StructuredOutputError as exc:
             record.status = "failed"
+            record.failed_node = getattr(exc, "failed_node", None) or exc.source_node
+            record.retryable = bool(
+                getattr(exc, "checkpoint_available", False) and record.failed_node
+            )
             snapshot = public_snapshot(exc.state or {})
             record.emit(
                 "error",
@@ -233,6 +264,8 @@ class RunManager:
                     "level": "error",
                     "operation": "model_response",
                     "retryable": True,
+                    "resumable": record.retryable,
+                    "manual_retry_count": record.manual_retry_count,
                     "schema": exc.schema_name,
                     "attempt": exc.attempts,
                     "max_attempts": exc.attempts,
@@ -245,15 +278,30 @@ class RunManager:
             LOGGER.exception("Agent run %s failed", record.run_id)
             record.status = "failed"
             code, message, retryable = _safe_run_failure(exc)
+            record.failed_node = getattr(exc, "failed_node", None)
+            if record.failed_node and code == "runtime_configuration_error":
+                code = "agent_node_failed"
+                message = "Agent 节点执行失败，请查看服务端日志后重试。"
+                retryable = True
+            record.retryable = bool(
+                retryable
+                and record.failed_node
+                and getattr(exc, "checkpoint_available", False)
+            )
+            failed_state = getattr(exc, "state", None)
             record.emit(
                 "error",
+                node=record.failed_node,
                 detail={
                     "label": message,
                     "code": code,
                     "level": "error",
                     "operation": "agent_run",
                     "retryable": retryable,
+                    "resumable": record.retryable,
+                    "manual_retry_count": record.manual_retry_count,
                 },
+                snapshot=public_snapshot(failed_state) if failed_state else None,
                 error=message,
             )
         finally:
@@ -273,4 +321,51 @@ class RunManager:
             if record.status not in TERMINAL_STATUSES:
                 record.cancel_requested = True
                 record.condition.notify_all()
+        return record
+
+    def retry(self, run_id: str, novel: StoredNovel) -> RunRecord:
+        """Queue a failed run using its checkpoint and original identity."""
+
+        with self._lock:
+            try:
+                record = self._records[run_id]
+            except KeyError as exc:
+                raise KeyError("任务不存在或服务已重启。") from exc
+            if record.status != "failed":
+                raise RuntimeError("只有执行失败的任务可以从失败节点重试。")
+            if not record.retryable or not record.failed_node:
+                raise RuntimeError("该任务没有可恢复的失败节点。")
+            if novel.novel_id != record.novel_id:
+                raise RuntimeError("任务关联的小说不匹配。")
+            if self._active_run_id:
+                active = self._records[self._active_run_id]
+                if active.status not in TERMINAL_STATUSES:
+                    raise RuntimeError("已有 Agent 任务正在运行。")
+
+            record.status = "queued"
+            record.cancel_requested = False
+            record.manual_retry_count += 1
+            self._active_run_id = record.run_id
+            failed_node = record.failed_node
+            record.last_retry_node = failed_node
+
+        record.emit(
+            "status",
+            node=failed_node,
+            detail={
+                "label": f"已请求从 {NODE_LABELS.get(failed_node, failed_node)} 重试",
+                "code": "manual_retry_requested",
+                "level": "info",
+                "retryable": True,
+                "resumable": True,
+                "manual_retry_count": record.manual_retry_count,
+            },
+        )
+        worker = threading.Thread(
+            target=self._run,
+            args=(record, novel, True),
+            daemon=True,
+            name=f"novel-agent-{run_id}-retry-{record.manual_retry_count}",
+        )
+        worker.start()
         return record

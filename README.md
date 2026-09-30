@@ -107,7 +107,7 @@ MODEL_REQUEST_TIMEOUT_SECONDS=120
 
 ### 混合检索配置
 
-不设置 `EMBEDDING_MODEL` 时，系统只使用本地中文 BM25，不会发起 Embedding 请求。要启用语义召回，配置供应商实际支持的模型：
+没有完整向量缓存时，Embedding 默认关闭，系统只使用本地中文 BM25，不会发起 Embedding 请求。要让前端开关可用，先配置供应商实际支持的模型：
 
 ```dotenv
 EMBEDDING_MODEL=your-embedding-model
@@ -121,9 +121,9 @@ EMBEDDING_BASE_URL=https://your-embedding-provider.example/v1
 EMBEDDING_REQUEST_TIMEOUT_SECONDS=30
 ```
 
-上传小说时会同步建立约 500 字的 Passage 和 BM25 索引，随后后台加载或构建向量索引。Embedding 每批最多发送 10 条文本以兼容千问接口，请求默认 30 秒超时。缓存写入 `output/indexes`，由小说内容、切分配置和 Embedding 模型共同决定是否有效。向量尚未就绪、未配置、超时或调用失败时，搜索自动使用 BM25。
+上传小说时只同步建立约 500 字的 Passage 和 BM25 索引。没有缓存时，用户在当前小说信息栏显式开启 Embedding 后，系统才会在后台构建向量索引，并实时显示已编码片段数和百分比；开关按小说生效，同时影响 Agent 和文本检索。Embedding 每批最多发送 10 条文本以兼容千问接口，请求默认 30 秒超时。缓存写入 `output/indexes`，关闭开关不会删除缓存。服务启动或上传时若检测到当前模型对应的完整有效缓存，会自动启用该小说的 Embedding 并显示“已构建完成”，不会重新发送正文。
 
-小说原文件和版本化 Manifest 保存在 `output/novels/<novel_id>`。服务每次启动都会恢复其中的小说并校验正文哈希；有效的向量缓存会直接加载，不再重复发送正文。相同正文即使文件名或编码不同也只保留一份，并返回原有 `novel_id`。可通过环境变量修改整个数据根目录：
+小说原文件和版本化 Manifest 保存在 `output/novels/<novel_id>`。服务每次启动都会恢复其中的小说并校验正文哈希；再次手动开启 Embedding 时，有效的向量缓存会直接加载，不再重复发送正文。相同正文即使文件名或编码不同也只保留一份，并返回原有 `novel_id`。可通过环境变量修改整个数据根目录：
 
 ```dotenv
 NOVEL_AGENT_DATA_DIR=output
@@ -163,6 +163,7 @@ novel-agent
 - 支持降级的 BM25/Embedding 混合检索与上下文展开。
 - 实时显示 Agent 节点图、调查计划、执行时间线、证据和最终答案。
 - 实时展示聊天模型 input/output/reasoning/cached token、分节点耗时，以及 Agent 和检索链路的异常、重试与降级记录。
+- 对超时、限流、网络和结构化输出等可恢复故障，可沿用原任务从失败节点手动重试；已完成节点、证据、时间线和用量统计不会丢失。恢复点只保存在当前服务进程内，服务重启后失效。
 - 在当前模型调用结束后的节点边界安全停止任务。
 
 ### 一键启动开发环境

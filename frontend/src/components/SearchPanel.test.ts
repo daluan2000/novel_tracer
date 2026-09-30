@@ -31,8 +31,9 @@ describe('SearchPanel', () => {
       start_line: 1, end_line: 5, text: '人物在这里出现。',
     }])
     vi.mocked(api.retrievalStatus).mockResolvedValue({
-      status: 'degraded', active_mode: 'lexical', passage_count: 12,
+      status: 'degraded', active_mode: 'lexical', embedding_enabled: false, passage_count: 12,
       embedding_model: null, error_code: 'embedding_not_configured',
+      embedding_progress: { completed: 0, total: 12, percentage: 0 },
       metrics: {
         document_request_count: 0, document_text_count: 0,
         document_input_characters: 0, query_request_count: 0,
