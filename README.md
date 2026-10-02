@@ -1,28 +1,64 @@
 # Novel Agent
 
-这是一个用于学习长链路 Agent 工作原理的小说证据型解读 Demo。输入一份本地小说 TXT 和一个开放式问题，Agent 会规划调查任务、搜索原文、读取上下文、记录证据、检查证据缺口、按需重规划，最后输出带原文位置的分析。
+> 基于 LangGraph 的长文本证据研究 Agent 系统
+
+Novel Agent 面向小说及其他长篇文本的深度分析场景，将文档解析、混合检索、任务规划、工具调用、证据校验和结论生成组织为一条可观测、可恢复的 Agent 工作流。上传本地 TXT 并提出开放式问题后，系统会自主拆解调查任务，检索和回读原文，持续评估证据缺口，并生成附带原文位置的分析结论。
+
+系统以“结论可追溯、过程可观测、执行有边界”为核心：所有证据都必须通过原文精确校验，调查过程受显式预算和去重机制约束，关键节点、工具调用、模型用量、异常与降级事件均可在 Web 工作台中实时查看。
 
 
-![界面图示](./assets/ui.png)
+![Novel Agent Web 工作台](./assets/ui.png)
 
 
-## 当前能力
+## 核心能力
 
-- 读取 UTF-8、UTF-8-SIG、UTF-16、GB18030 等常见 TXT。
-- 识别阿拉伯数字、中文数字、英文、特殊名称和无编号短标题。
-- 支持同一本小说混用多种标题格式。
-- 标题识别不可靠时自动按段落和长度降级切分。
-- 所有 Chunk 保留行号和字符偏移，可定位回原文。
-- 四个只读工具：结构查看、混合搜索、上下文读取、Section 读取。
-- 小段落中文 BM25 与可选 Embedding 语义召回，通过 RRF 融合并映射回稳定 Chunk。
-- 持久化上传的小说和向量索引；重启后自动恢复，Embedding 异常时自动降级。
-- LangGraph 链路：Planner（简单题使用本地单任务计划）、Researcher、ToolNode、Assessor、Replanner、Writer。
-- 最大调查步数、重复工具调用保护、结构化工具错误。
-- 每轮最多 2 个工具、每项任务最多 2 个调查轮次和 6 条证据、最多 2 次 Replan。
-- 原文引文精确校验，模型无法把不存在的引文写入证据状态。
-- JSONL 执行轨迹，以及按节点汇总的输入、输出、思考与缓存 token 指标。
+### Agent 编排与推理
 
-## Agent 图
+- 基于 LangGraph 构建 Planner、Researcher、ToolNode、Assessor、Replanner、Writer 多阶段状态图。
+- 简单问题使用本地单任务计划快速执行，复杂问题由 Planner 拆解并在证据不足时动态 Replan。
+- 计划、证据、假设、未解决问题和工具历史均进入显式状态，支持节点级路由与断点续跑。
+- 通过最大调查步数、单任务轮次、证据数量和重复调用保护约束执行成本，避免无边界循环。
+
+### 长文本解析与检索
+
+- 支持 UTF-8、UTF-8-SIG、UTF-16、GB18030 等常见 TXT 编码。
+- 识别阿拉伯数字、中文数字、英文、特殊名称和无编号短标题，兼容同一文本中的混合标题格式。
+- 标题识别置信度不足时按段落和长度安全降级切分；所有 Chunk 保留行号与字符偏移，可精确定位原文。
+- 提供结构查看、混合搜索、上下文读取和 Section 读取四类只读工具。
+- 使用中文 BM25 与可选 Embedding 语义召回，通过 RRF 融合结果并映射回稳定 Chunk。
+
+### 证据可信度与运行可靠性
+
+- 对模型提交的引文执行原文精确校验，未出现在原文中的内容无法进入证据状态。
+- 持久化小说、Manifest 与向量索引，服务重启后自动恢复并校验正文哈希。
+- Embedding 不可用、超时或缓存无效时自动降级到 BM25，不阻断主调查流程。
+- 结构化输出异常可在节点内安全重试；运行失败后可从最近节点恢复，保留既有计划、证据和用量数据。
+
+### 可观测 Web 工作台
+
+- 实时展示 Agent 节点图、调查计划、工具调用、执行时间线、证据与最终答案。
+- 按节点统计模型输入、输出、思考与缓存 token，并展示耗时、异常、重试和降级记录。
+- 提供小说管理、章节浏览、文本检索、Embedding 索引构建与消耗监控。
+- 支持在模型调用完成后的节点边界安全停止任务。
+
+## 系统架构
+
+系统由文档处理、检索、Agent 编排、运行时和交互层组成。语料层负责把原始文本转换为带稳定位置的 Section、Chunk 与 Passage；Agent 通过受控只读工具访问检索层，不直接修改原始文档；运行时统一处理模型配置、结构化输出、重试与指标采集。
+
+```mermaid
+flowchart LR
+    U[TXT 文档] --> C[解析与结构识别]
+    C --> P[Section / Chunk / Passage]
+    P --> R[BM25 + Embedding + RRF]
+    Q[用户问题] --> A[LangGraph Agent]
+    A <-->|只读工具| R
+    A --> E[证据校验与状态管理]
+    E --> O[可追溯结论]
+    A -.运行事件.-> W[Web 工作台 / SSE]
+    R -.检索指标.-> W
+```
+
+### Agent 执行图
 
 ```mermaid
 flowchart TD
@@ -37,32 +73,44 @@ flowchart TD
     G --> H[END]
 ```
 
-## 环境
+## 快速开始
 
-当前项目按 Conda `base` 环境开发和测试：
+### 环境准备
+
+项目要求：
+
+- Python 3.11+
+- Node.js 20.19.x 或 22.12+ 与 npm（Vite 7 的要求，仅使用后端 API 时可不安装）
+
+安装后端与前端依赖：
 
 ```powershell
-conda activate base
 python --version
-python -m pip install -e .
+python -m pip install -e ".[dev]"
+Set-Location frontend
+npm install
+Set-Location ..
 ```
 
-如果不希望 editable 安装，也可以安装依赖后设置 `PYTHONPATH=src`。
-安装后可使用 `novel-agent` 启动 Web 工作台；未安装脚本时使用：
-
-```powershell
-python -m novel_agent
-```
-
-## 模型配置
-
-复制配置模板：
+复制环境变量模板并填写模型配置：
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-至少设置：
+推荐开发时一键启动前后端：
+
+```powershell
+python .\start_dev.py
+```
+
+浏览器访问 <http://127.0.0.1:5173>。此模式由 Vite 提供前端热更新，并将 `/api` 代理到 <http://127.0.0.1:8000>。
+
+> 只想先检查本机依赖是否齐全时，运行 `python .\start_dev.py --check`；该命令不会启动服务。
+
+## 模型配置
+
+`.env` 最少只需提供 API Key；`MODEL_NAME` 省略时使用 `gpt-4.1-mini`：
 
 ```dotenv
 OPENAI_API_KEY=your-key
@@ -105,6 +153,24 @@ NOVEL_AGENT_STRUCTURED_RETRIES=2
 MODEL_REQUEST_TIMEOUT_SECONDS=120
 ```
 
+### 配置项速查
+
+| 变量 | 默认值 | 作用 |
+|---|---:|---|
+| `OPENAI_API_KEY` | 无 | 聊天模型凭据，运行 Agent 必填 |
+| `OPENAI_BASE_URL` | 服务商默认值 | OpenAI-compatible API 地址 |
+| `MODEL_NAME` | `gpt-4.1-mini` | 聊天模型名称 |
+| `MODEL_THINKING_MODE` | 空（自动） | `enabled` / `disabled`；DeepSeek 默认关闭 |
+| `MODEL_REQUEST_TIMEOUT_SECONDS` | `120` | 单次聊天请求超时，合法范围 5–600 秒 |
+| `NOVEL_AGENT_TEMPERATURE` | `0` | 聊天模型温度 |
+| `NOVEL_AGENT_MAX_STEPS` | `16` | Web 页面默认调查步数；接口最终限制为 1–100 |
+| `NOVEL_AGENT_STRUCTURED_RETRIES` | `2` | 结构化输出额外重试次数，合法范围 0–5 |
+| `NOVEL_AGENT_DATA_DIR` | `output` | 小说、Manifest 和向量索引的数据根目录 |
+| `EMBEDDING_MODEL` | 空 | 留空时仅使用 BM25，并禁用页面上的 Embedding 开关 |
+| `EMBEDDING_API_KEY` | `OPENAI_API_KEY` | Embedding 服务凭据 |
+| `EMBEDDING_BASE_URL` | `OPENAI_BASE_URL` | Embedding 服务地址 |
+| `EMBEDDING_REQUEST_TIMEOUT_SECONDS` | `30` | 单次 Embedding 请求超时，合法范围 5–600 秒 |
+
 ### 混合检索配置
 
 没有完整向量缓存时，Embedding 默认关闭，系统只使用本地中文 BM25，不会发起 Embedding 请求。要让前端开关可用，先配置供应商实际支持的模型：
@@ -121,9 +187,9 @@ EMBEDDING_BASE_URL=https://your-embedding-provider.example/v1
 EMBEDDING_REQUEST_TIMEOUT_SECONDS=30
 ```
 
-上传小说时只同步建立约 500 字的 Passage 和 BM25 索引。没有缓存时，用户在当前小说信息栏显式开启 Embedding 后，系统才会在后台构建向量索引，并实时显示已编码片段数和百分比；开关按小说生效，同时影响 Agent 和文本检索。Embedding 每批最多发送 10 条文本以兼容千问接口，请求默认 30 秒超时。缓存写入 `output/indexes`，关闭开关不会删除缓存。服务启动或上传时若检测到当前模型对应的完整有效缓存，会自动启用该小说的 Embedding 并显示“已构建完成”，不会重新发送正文。
+上传小说时只同步建立约 500 字的 Passage 和 BM25 索引。没有缓存时，用户在当前小说信息栏显式开启 Embedding 后，系统才会在后台构建向量索引，并实时显示已编码片段数和百分比；开关按小说生效，同时影响 Agent 和文本检索。Embedding 每批最多发送 10 条文本以兼容千问接口，请求默认 30 秒超时。缓存默认写入 `output/indexes`，关闭开关不会删除缓存。服务启动或上传时若检测到当前模型对应的完整有效缓存，会自动启用该小说的 Embedding 并显示“已构建完成”，不会重新发送正文。
 
-小说原文件和版本化 Manifest 保存在 `output/novels/<novel_id>`。服务每次启动都会恢复其中的小说并校验正文哈希；再次手动开启 Embedding 时，有效的向量缓存会直接加载，不再重复发送正文。相同正文即使文件名或编码不同也只保留一份，并返回原有 `novel_id`。可通过环境变量修改整个数据根目录：
+小说原文件和版本化 Manifest 默认保存在 `output/novels/<novel_id>`。服务每次启动都会恢复其中的小说并校验正文哈希；再次手动开启 Embedding 时，有效的向量缓存会直接加载，不再重复发送正文。相同正文即使文件名或编码不同也只保留一份，并返回原有 `novel_id`。可通过环境变量修改小说与索引的数据根目录：
 
 ```dotenv
 NOVEL_AGENT_DATA_DIR=output
@@ -133,29 +199,53 @@ NOVEL_AGENT_DATA_DIR=output
 
 前端的“Embedding 消耗与检索状态”会显示文档/查询请求次数、编码文本数、输入字符数、缓存命中、失败请求和 BM25 降级次数，并保留最近 50 条安全事件。多数 OpenAI-compatible Embedding 接口不返回可靠 token 用量，因此这里明确以字符数计量，不将其标记为 token；供应商原始异常正文和凭据不会返回浏览器。
 
-## 使用方法
+## 使用方式
 
-### Web 图形化工作台
+### 开发模式
 
-安装 Python 与前端依赖并构建：
+首次运行前按“快速开始”安装依赖。启动脚本会同时运行 8000 端口的后端与 5173 端口的 Vite 前端；按 `Ctrl+C` 会停止两个服务。
+
+Windows PowerShell：
 
 ```powershell
-python -m pip install -e ".[dev]"
-Set-Location frontend
-npm install
-npm run build
-Set-Location ..
+python .\start_dev.py
 ```
 
-启动本机服务：
+Linux：
+
+```bash
+python3 start_dev.py
+```
+
+脚本会在启动前检查 `8000` 和 `5173`。若发现监听进程，会显示端口、PID 和进程名，并询问是否终止；只有输入 `y` 或 `yes` 才会清理进程并继续，直接回车或输入其他内容会保留原进程并取消启动。无法识别 PID 时脚本不会尝试清理。
+
+也可以分别启动后端与 Vite：
 
 ```powershell
+# 终端 1
+python -m novel_agent
+
+# 终端 2
+Set-Location frontend
+npm run dev
+```
+
+### 构建后运行
+
+后端会直接托管 `frontend/dist`。先构建前端，再启动单一服务：
+
+```powershell
+Set-Location frontend
+npm run build
+Set-Location ..
 novel-agent
 ```
 
-也可以直接运行 `python -m novel_agent`。
+`novel-agent` 与 `python -m novel_agent` 等价。浏览器访问 <http://127.0.0.1:8000>，交互式 API 文档位于 <http://127.0.0.1:8000/docs>。如果未生成 `frontend/dist`，根路径会返回 503，此时应先构建前端或改用开发模式。
 
-然后访问 <http://127.0.0.1:8000>。页面支持：
+### Web 图形化工作台
+
+工作台提供：
 
 - 拖拽或选择 TXT，并查看编码、章节与 Chunk 概览。
 - 自动恢复已保存的小说，并在多本小说之间切换。
@@ -166,42 +256,14 @@ novel-agent
 - 对超时、限流、网络和结构化输出等可恢复故障，可沿用原任务从失败节点手动重试；已完成节点、证据、时间线和用量统计不会丢失。恢复点只保存在当前服务进程内，服务重启后失效。
 - 在当前模型调用结束后的节点边界安全停止任务。
 
-### 一键启动开发环境
+当前实现只允许全局同时运行一个 Agent 任务；新任务会在已有任务结束、失败或取消后才能创建。上传文件必须为 `.txt`，单文件上限为 50 MiB。
 
-首次运行前，先安装 Python 依赖并在 `frontend` 目录执行一次 `npm install`。
-之后脚本会同时启动 8000 端口的后端和 5173 端口的前端；按 `Ctrl+C`
-会同时停止两个服务。
+### 本地数据与外部请求
 
-Windows PowerShell：
-
-```powershell
-python .\start_dev.py
-```
-
-脚本会在启动前检查 `8000` 和 `5173`。若发现监听进程，会显示端口、PID 和进程名，并询问是否终止；只有输入 `y` 或 `yes` 才会清理进程并继续，直接回车或输入其他内容会保留原进程并取消启动。无法识别 PID 时脚本不会尝试盲目清理。
-
-Linux：
-
-```bash
-python3 start_dev.py
-```
-
-只检查 Python、npm 和前端依赖是否就绪，不启动服务：
-
-```powershell
-python .\start_dev.py --check
-```
-
-开发前端时，可分别运行后端与 Vite；`/api` 会自动代理到 8000 端口：
-
-```powershell
-# 终端 1
-python -m novel_agent
-
-# 终端 2
-Set-Location frontend
-npm run dev
-```
+- 上传的 TXT、Manifest 与向量缓存分别保存在 `<NOVEL_AGENT_DATA_DIR>/novels` 和 `<NOVEL_AGENT_DATA_DIR>/indexes`，这两个目录默认位于 `output`，且已被 Git 忽略。
+- Agent 调查时，问题、任务摘要以及检索到的必要原文会发送给聊天模型服务；启用 Embedding 后，系统会将全部约 500 字的 Passage 分批发送给所配置的 Embedding 服务。
+- 每次 Agent 运行的 JSONL 节点轨迹写入 `output/traces/<run_id>.jsonl`。轨迹可能包含问题、工具参数、工具结果和模型输出，不应提交到版本库或公开分享。
+- `NOVEL_AGENT_DATA_DIR` 当前不改变轨迹目录；备份可恢复语料和向量缓存，但不能恢复已结束或中断的 Agent 运行状态。
 
 ## 工具
 
@@ -246,7 +308,6 @@ token_usage           按节点汇总的 token 与模型耗时
 ## 测试
 
 ```powershell
-conda activate base
 python -X utf8 -m pytest
 
 Set-Location frontend
@@ -286,12 +347,10 @@ start_dev.py               跨平台的一键开发启动脚本
 tests/                     按上述职责镜像组织的后端测试
 ```
 
-## 已知边界
+## 系统边界与设计取舍
 
-- 任意无编号标题无法做到百分之百自动识别；系统会优先安全降级。
-- 当前搜索是关键词匹配，不理解同义词；这正好用于观察 Agent 是否会主动改写查询。
-- In-memory Checkpointer 只在当前进程存活，尚未实现跨进程恢复。
-- 简单过程指标不是答案质量的人工或 LLM Judge 评分。
-- 大模型的工具调用和结构化输出质量取决于具体供应商与模型。
-
-建议先观察纯 ReAct 轨迹，再依次研究显式计划、证据状态、Assessor 和 Replan 对行为的影响，不要一开始增加多 Agent 或向量数据库。
+- 无编号标题具有天然歧义，无法保证完全自动识别；系统会在置信度不足时优先采用安全的段落切分策略。
+- 未启用 Embedding 时仅使用 BM25 关键词召回；启用后才具备语义召回能力，并在服务异常时自动降级。
+- Agent 运行恢复点使用 In-memory Checkpointer，仅在当前服务进程内有效；小说与检索索引可跨进程持久化恢复。
+- 工作台中的 token、耗时和步骤统计用于运行观测，不等同于答案质量评分。
+- 工具调用与结构化输出的稳定性仍受所选模型及 OpenAI-compatible 服务实现质量影响。
