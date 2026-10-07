@@ -32,6 +32,10 @@ class NovelCorpus:
 
         # chunk_id -> 全书 Chunk 序号：用于读取命中块前后的相邻上下文。
         self._global_index = {chunk.chunk_id: index for index, chunk in enumerate(document.chunks)}
+        # section_id -> 章节顺序：范围检索以解析后的实际目录顺序为准。
+        self._section_index = {
+            section.section_id: index for index, section in enumerate(document.sections)
+        }
         self._retrieval = RetrievalService(document)
 
     @classmethod
@@ -70,10 +74,36 @@ class NovelCorpus:
             ],
         }
 
-    def search(self, keyword: str, top_k: int = 5) -> list[SearchHit]:
+    def search(
+        self,
+        keyword: str,
+        top_k: int = 5,
+        start_section_id: str | None = None,
+        end_section_id: str | None = None,
+    ) -> list[SearchHit]:
         """Search passage-level lexical and dense indexes with lexical fallback."""
 
-        return self._retrieval.search(keyword, top_k)
+        if start_section_id is not None and start_section_id not in self._section_index:
+            raise ValueError(f"起始章节不存在：{start_section_id}")
+        if end_section_id is not None and end_section_id not in self._section_index:
+            raise ValueError(f"结束章节不存在：{end_section_id}")
+
+        start_index = (
+            self._section_index[start_section_id] if start_section_id is not None else 0
+        )
+        end_index = (
+            self._section_index[end_section_id]
+            if end_section_id is not None
+            else len(self.document.sections) - 1
+        )
+        if start_index > end_index:
+            raise ValueError("起始章节不能晚于结束章节。")
+
+        allowed_section_ids = {
+            section.section_id
+            for section in self.document.sections[start_index : end_index + 1]
+        }
+        return self._retrieval.search(keyword, top_k, allowed_section_ids)
 
     def retrieval_status(self) -> dict:
         """Return safe, public index readiness information."""

@@ -25,3 +25,45 @@ def test_quote_validation(corpus: NovelCorpus) -> None:
 def test_empty_search_is_rejected(corpus: NovelCorpus) -> None:
     with pytest.raises(ValueError, match="不能为空"):
         corpus.search("  ")
+
+
+def test_search_supports_inclusive_section_ranges(corpus: NovelCorpus) -> None:
+    first, second = corpus.document.sections
+
+    full_book = corpus.search("吕树", top_k=20)
+    first_only = corpus.search(
+        "吕树",
+        top_k=20,
+        end_section_id=first.section_id,
+    )
+    second_only = corpus.search(
+        "吕树",
+        top_k=20,
+        start_section_id=second.section_id,
+    )
+    inclusive = corpus.search(
+        "吕树",
+        top_k=20,
+        start_section_id=first.section_id,
+        end_section_id=second.section_id,
+    )
+
+    assert {hit.section_id for hit in full_book} == {first.section_id, second.section_id}
+    assert {hit.section_id for hit in first_only} == {first.section_id}
+    assert {hit.section_id for hit in second_only} == {second.section_id}
+    assert {hit.section_id for hit in inclusive} == {first.section_id, second.section_id}
+
+
+def test_search_rejects_invalid_or_reversed_section_ranges(corpus: NovelCorpus) -> None:
+    first, second = corpus.document.sections
+
+    with pytest.raises(ValueError, match="起始章节不存在"):
+        corpus.search("吕树", start_section_id="missing-section")
+    with pytest.raises(ValueError, match="结束章节不存在"):
+        corpus.search("吕树", end_section_id="missing-section")
+    with pytest.raises(ValueError, match="不能晚于"):
+        corpus.search(
+            "吕树",
+            start_section_id=second.section_id,
+            end_section_id=first.section_id,
+        )

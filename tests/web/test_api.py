@@ -162,6 +162,65 @@ def test_upload_structure_search_and_context() -> None:
     assert any("吕小鱼" in chunk["text"] for chunk in context.json())
 
 
+def test_search_accepts_chapter_range_and_rejects_invalid_boundaries() -> None:
+    ranged_text = (
+        "第一章 起点\n\n" + "共同线索只在第一段展开。\n\n" * 40
+        + "第二章 中段\n\n" + "共同线索在第二段继续。\n\n" * 40
+        + "番外 尾声\n\n" + "共同线索最终在番外收束。\n\n" * 40
+    ).encode("utf-8")
+    other_text = (
+        "第一章 他书\n\n" + "共同线索属于另一本小说。\n\n" * 40
+    ).encode("utf-8")
+
+    with TestClient(create_app(executor=_success_executor)) as client:
+        novel = client.post(
+            "/api/novels",
+            files={"file": ("range.txt", ranged_text, "text/plain")},
+        ).json()
+        other = client.post(
+            "/api/novels",
+            files={"file": ("other.txt", other_text, "text/plain")},
+        ).json()
+        sections = client.get(
+            f"/api/novels/{novel['novel_id']}/sections",
+            params={"limit": 200},
+        ).json()["items"]
+        other_section = client.get(
+            f"/api/novels/{other['novel_id']}/sections",
+            params={"limit": 200},
+        ).json()["items"][0]
+
+        middle_only = client.get(
+            f"/api/novels/{novel['novel_id']}/search",
+            params={
+                "q": "共同线索",
+                "top_k": 20,
+                "startChapterId": sections[1]["chapter_id"],
+                "endChapterId": sections[1]["chapter_id"],
+            },
+        )
+        reversed_range = client.get(
+            f"/api/novels/{novel['novel_id']}/search",
+            params={
+                "q": "共同线索",
+                "startChapterId": sections[1]["chapter_id"],
+                "endChapterId": sections[0]["chapter_id"],
+            },
+        )
+        cross_novel = client.get(
+            f"/api/novels/{novel['novel_id']}/search",
+            params={"q": "共同线索", "startChapterId": other_section["chapter_id"]},
+        )
+
+    assert middle_only.status_code == 200
+    assert middle_only.json()
+    assert {hit["section_id"] for hit in middle_only.json()} == {sections[1]["section_id"]}
+    assert reversed_range.status_code == 400
+    assert "不能晚于" in reversed_range.json()["detail"]
+    assert cross_novel.status_code == 400
+    assert "不属于当前小说" in cross_novel.json()["detail"]
+
+
 def test_upload_builds_dense_index_in_background(monkeypatch, tmp_path) -> None:
     started = threading.Event()
     release = threading.Event()

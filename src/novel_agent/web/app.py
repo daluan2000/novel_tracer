@@ -132,7 +132,13 @@ def create_app(
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc.args[0])) from exc
         return {
-            "items": sections[offset : offset + limit],
+            "items": [
+                {
+                    **section,
+                    "chapter_id": f"{novel_id}:{section['section_id']}",
+                }
+                for section in sections[offset : offset + limit]
+            ],
             "offset": offset,
             "limit": limit,
             "total": len(sections),
@@ -161,10 +167,32 @@ def create_app(
         novel_id: str,
         q: str = Query(min_length=1, max_length=200),
         top_k: int = Query(5, ge=1, le=20),
+        start_section_id: str | None = Query(None, alias="startChapterId"),
+        end_section_id: str | None = Query(None, alias="endChapterId"),
     ) -> list[dict[str, Any]]:
         try:
             corpus = store.get(novel_id).corpus
-            return [item.model_dump() for item in corpus.search(q, top_k)]
+            chapter_prefix = f"{novel_id}:"
+
+            def resolve_chapter_id(chapter_id: str | None, boundary: str) -> str | None:
+                if chapter_id is None:
+                    return None
+                if not chapter_id.startswith(chapter_prefix):
+                    raise ValueError(f"{boundary}章节无效或不属于当前小说。")
+                section_id = chapter_id.removeprefix(chapter_prefix)
+                if not section_id:
+                    raise ValueError(f"{boundary}章节无效或不属于当前小说。")
+                return section_id
+
+            return [
+                item.model_dump()
+                for item in corpus.search(
+                    q,
+                    top_k,
+                    start_section_id=resolve_chapter_id(start_section_id, "起始"),
+                    end_section_id=resolve_chapter_id(end_section_id, "结束"),
+                )
+            ]
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc.args[0])) from exc
         except ValueError as exc:

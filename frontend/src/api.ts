@@ -66,8 +66,15 @@ export const api = {
     )
   },
 
-  search(novelId: string, query: string, topK: number) {
+  search(
+    novelId: string,
+    query: string,
+    topK: number,
+    range: { startChapterId?: string; endChapterId?: string } = {},
+  ) {
     const params = new URLSearchParams({ q: query, top_k: String(topK) })
+    if (range.startChapterId) params.set('startChapterId', range.startChapterId)
+    if (range.endChapterId) params.set('endChapterId', range.endChapterId)
     return request<SearchHit[]>(`/api/novels/${encodeURIComponent(novelId)}/search?${params}`)
   },
 

@@ -440,7 +440,12 @@ class RetrievalService:
             self._build_completed_texts = self._build_total_texts
             self._query_cache.clear()
 
-    def _lexical_ranking(self, query: str, terms: list[str]) -> list[int]:
+    def _lexical_ranking(
+        self,
+        query: str,
+        terms: list[str],
+        allowed_section_ids: set[str] | None = None,
+    ) -> list[int]:
         query_tokens = _tokens(query, unique=True)
         scores = np.asarray(self._bm25.get_scores(query_tokens), dtype=np.float64)
         for index, passage in enumerate(self.passages):
@@ -454,15 +459,21 @@ class RetrievalService:
         candidates = [
             index
             for index, score in enumerate(scores)
-            if score > 0
-            or any(token in self._token_sets[index] for token in query_tokens)
-            or any(
-                term
-                in (
-                    self.passages[index].text
-                    + (self.passages[index].section_title or "")
-                ).casefold()
-                for term in terms
+            if (
+                allowed_section_ids is None
+                or self.passages[index].section_id in allowed_section_ids
+            )
+            and (
+                score > 0
+                or any(token in self._token_sets[index] for token in query_tokens)
+                or any(
+                    term
+                    in (
+                        self.passages[index].text
+                        + (self.passages[index].section_title or "")
+                    ).casefold()
+                    for term in terms
+                )
             )
         ]
         candidates.sort(key=lambda index: (-float(scores[index]), self.passages[index].start_char))
@@ -498,7 +509,9 @@ class RetrievalService:
                 self._query_cache.popitem(last=False)
         return vector
 
-    def _dense_ranking(self, query: str) -> list[int]:
+    def _dense_ranking(
+        self, query: str, allowed_section_ids: set[str] | None = None
+    ) -> list[int]:
         with self._lock:
             matrix = self._dense_matrix
             provider = self._embedding_provider
@@ -518,11 +531,28 @@ class RetrievalService:
                 )
                 return []
             scores = matrix @ vector
-            count = min(DENSE_CANDIDATES, len(scores))
+            eligible = np.asarray(
+                [
+                    index
+                    for index, passage in enumerate(self.passages)
+                    if allowed_section_ids is None
+                    or passage.section_id in allowed_section_ids
+                ],
+                dtype=np.int64,
+            )
+            count = min(DENSE_CANDIDATES, len(eligible))
             if count == 0:
                 return []
-            indices = np.argpartition(-scores, count - 1)[:count]
-            return sorted(indices.tolist(), key=lambda index: (-float(scores[index]), self.passages[index].start_char))
+            eligible_scores = scores[eligible]
+            positions = np.argpartition(-eligible_scores, count - 1)[:count]
+            indices = eligible[positions]
+            return sorted(
+                indices.tolist(),
+                key=lambda index: (
+                    -float(scores[index]),
+                    self.passages[index].start_char,
+                ),
+            )
         except Exception as exc:  # A query-time provider failure must not break lexical search.
             with self._lock:
                 self._metrics["fallback_count"] += 1
@@ -560,16 +590,21 @@ class RetrievalService:
         start = max(0, min(positions) - 120)
         return text[start : start + maximum].strip()
 
-    def search(self, query: str, top_k: int) -> list[SearchHit]:
+    def search(
+        self,
+        query: str,
+        top_k: int,
+        allowed_section_ids: set[str] | None = None,
+    ) -> list[SearchHit]:
         terms = _query_terms(query)
         if not terms:
             raise ValueError("搜索关键词不能为空。")
         top_k = min(max(top_k, 1), 20)
-        lexical = self._lexical_ranking(query, terms)
+        lexical = self._lexical_ranking(query, terms, allowed_section_ids)
         with self._lock:
             status = self._status
             error_code = self._error_code
-        dense = self._dense_ranking(query)
+        dense = self._dense_ranking(query, allowed_section_ids)
         if status in {"building", "degraded"}:
             with self._lock:
                 self._metrics["fallback_count"] += 1

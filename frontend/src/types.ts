@@ -36,6 +36,7 @@ export interface NovelPage {
 }
 
 export interface SectionItem {
+  chapter_id: string
   section_id: string
   title: string | null
   detected: boolean

@@ -247,7 +247,13 @@ td small { margin-top: 4px; color: var(--muted); font: 9px 'DM Mono', monospace;
 .pagination { display: flex; align-items: center; justify-content: flex-end; gap: 16px; margin-top: 18px; }
 .pagination span { color: var(--muted); font: 11px 'DM Mono', monospace; }
 
-.search-form { display: flex; align-items: flex-end; gap: 14px; margin-top: 24px; padding: 20px; background: #f4f2ed; }
+.search-form { display: grid; gap: 14px; margin-top: 24px; padding: 20px; background: #f4f2ed; }
+.search-primary-row { display: flex; align-items: flex-end; gap: 14px; }
+.chapter-range { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: end; gap: 12px; padding-top: 14px; border-top: 1px solid var(--line); }
+.range-separator { padding-bottom: 11px; color: var(--muted); font-size: 11px; }
+.field-error { margin: -4px 0 0; color: #a22e22; font-size: 11px; }
+.search-summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 20px; padding: 10px 12px; border-left: 3px solid var(--green); color: var(--muted); background: var(--green-soft); font-size: 11px; }
+.search-summary strong { color: var(--green); font: 500 11px 'DM Mono', monospace; }
 .result-list { display: grid; gap: 14px; margin-top: 24px; }
 .search-result { padding: 20px; border: 1px solid var(--line); transition: border-color .15s; }
 .search-result:hover { border-color: #aaa498; }
@@ -289,7 +295,9 @@ footer p { margin: 0; font-family: 'Noto Sans SC', sans-serif; }
   .tabs { padding: 0 6px; overflow-x: auto; }
   .tabs button { min-width: max-content; padding: 16px 14px; }
   .workspace-panel { padding: 18px; }
-  .question-box, .search-form { align-items: stretch; flex-direction: column; }
+  .question-box, .search-primary-row { align-items: stretch; flex-direction: column; }
+  .chapter-range { grid-template-columns: 1fr; }
+  .range-separator { display: none; }
   .step-field, .field.compact { width: 100%; flex-basis: auto; }
   .start-button { width: 100%; }
   .run-header { align-items: flex-start; flex-direction: column; }
