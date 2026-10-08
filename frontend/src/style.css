@@ -124,7 +124,9 @@ main { width: min(1240px, calc(100% - 48px)); margin: 0 auto; }
 .chat-bubble > p { margin: 7px 0 0; font-size: 13px; line-height: 1.7; }
 .user-bubble { max-width: 78%; justify-self: end; border-color: #e1b7ad; background: #fff4f0; }
 .assistant-bubble { max-width: 92%; justify-self: start; background: var(--paper); }
-.current-question { margin: 0 0 16px auto; }
+.current-turn { margin-bottom: 28px; }
+.current-question { margin-left: auto; }
+.current-answer { width: min(92%, 960px); }
 .history-answer-heading span { color: var(--muted); font: 9px 'DM Mono', monospace; }
 .markdown-body.compact { margin: 10px 0; font-size: 12px; line-height: 1.75; }
 .markdown-body.compact > :first-child { margin-top: 0; }

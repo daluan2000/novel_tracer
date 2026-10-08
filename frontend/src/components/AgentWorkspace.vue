@@ -349,9 +349,20 @@ async function toggleEvidence(evidence: Evidence) {
             </article>
           </div>
 
-          <div v-if="currentTurn" class="chat-bubble user-bubble current-question">
-            <small>你 · {{ formatDateTime(currentTurn.created_at) }}</small><p>{{ currentTurn.question }}</p>
-          </div>
+          <article v-if="currentTurn" class="history-turn current-turn">
+            <div class="chat-bubble user-bubble current-question">
+              <small>你 · {{ formatDateTime(currentTurn.created_at) }}</small><p>{{ currentTurn.question }}</p>
+            </div>
+            <div
+              v-if="view.snapshot?.final_answer"
+              class="chat-bubble assistant-bubble current-answer"
+              aria-live="polite"
+            >
+              <div class="history-answer-heading"><small>Novel Lens · {{ statusNames[view.status] }}</small><span>{{ view.events.length }} events</span></div>
+              <div class="markdown-body compact" v-html="answerHtml"></div>
+              <ul v-if="view.snapshot.limitations.length" class="history-limitations"><li v-for="item in view.snapshot.limitations" :key="item">{{ item }}</li></ul>
+            </div>
+          </article>
 
     <div class="question-box">
       <label class="field grow"><span>想了解什么</span><textarea v-model="question" rows="3" placeholder="例如：分析人物关系如何变化，并给出关键阶段、原文依据和反面证据。" :disabled="isRunning" /></label>
@@ -426,14 +437,6 @@ async function toggleEvidence(evidence: Evidence) {
     </div>
 
     <RetrievalObservability :novel-id="novel.novel_id" :polling="isRunning" :refresh-key="retrievalRevision" />
-
-    <div v-if="view.snapshot?.final_answer" class="answer-layout answer-only">
-      <article class="answer-card">
-        <p class="eyebrow">综合结论</p><h2>分析结果</h2>
-        <div class="markdown-body" v-html="answerHtml"></div>
-        <div v-if="view.snapshot.limitations.length" class="notice"><strong>需要注意</strong><ul><li v-for="item in view.snapshot.limitations" :key="item">{{ item }}</li></ul></div>
-      </article>
-    </div>
 
     <div v-if="view.snapshot?.evidence.length" class="evidence-section">
       <div class="section-heading"><div><p class="eyebrow">已经核验</p><h2>原文依据</h2></div><span>{{ view.snapshot.evidence.length }} 条</span></div>

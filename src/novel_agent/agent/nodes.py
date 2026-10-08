@@ -32,7 +32,7 @@ from novel_agent.agent.prompts import (
     RESEARCHER_PROMPT,
     WRITER_PROMPT,
 )
-from novel_agent.agent.schemas import AssessmentOutput, FinalAnswer, PlanOutput, ReplanOutput
+from novel_agent.agent.schemas import AssessmentOutput, PlanOutput, ReplanOutput
 from novel_agent.agent.state import AgentState
 from novel_agent.corpus.repository import NovelCorpus
 from novel_agent.runtime.config import (
@@ -50,9 +50,9 @@ MAX_RESEARCH_EVIDENCE = 6
 class AgentNodes:
     """状态图中各节点的实现。
 
-    节点接收完整 AgentState，但只返回本轮发生变化的字段。Planner、Assessor、
-    Replanner 和 Writer 要求模型返回 Pydantic 结构；Researcher 则允许模型通过
-    tool_calls 自主选择检索工具。
+    节点接收完整 AgentState，但只返回本轮发生变化的字段。Planner、Assessor 和
+    Replanner 要求模型返回 Pydantic 结构；Researcher 允许模型通过
+    tool_calls 自主选择检索工具，Writer 则直接接收 Markdown 文本。
     """
 
     def __init__(
@@ -75,14 +75,14 @@ class AgentNodes:
         self.on_diagnostic = on_diagnostic
         self.on_model_usage = on_model_usage
 
-        # 同一个基础模型绑定成五种角色。Researcher 绑定真实工具；其余角色绑定
-        # 输出 schema，使后续代码能按字段处理结果，而不必解析自然语言。
+        # Researcher 绑定真实工具；Planner、Assessor 和 Replanner 绑定输出
+        # schema。Writer 使用未绑定工具的基础模型，避免兼容接口忽略 named
+        # tool_choice 时丢弃已经生成的最终正文。
         self.research_model = model.bind_tools(tools)
         structured_options = {"method": "function_calling", "include_raw": True}
         self.plan_model = model.with_structured_output(PlanOutput, **structured_options)
         self.assess_model = model.with_structured_output(AssessmentOutput, **structured_options)
         self.replan_model = model.with_structured_output(ReplanOutput, **structured_options)
-        self.writer_model = model.with_structured_output(FinalAnswer, **structured_options)
 
     def _invoke_structured(
         self, runnable: Any, messages: list[Any], schema: type[Any], source_node: str
@@ -430,15 +430,59 @@ class AgentNodes:
             "contradictions": review.get("contradictions", []),
             "termination_reason": state["termination_reason"],
         }
-        output = self._invoke_structured(
-            self.writer_model,
-            [
-                SystemMessage(content=WRITER_PROMPT),
-                *_conversation_messages(state),
-                HumanMessage(content=state["question"]),
-                HumanMessage(content="已验证材料：\n" + _json(prompt_data)),
-            ],
-            FinalAnswer,
-            "writer",
-        )
-        return {"final_answer": output.answer, "limitations": output.limitations}
+        messages = [
+            SystemMessage(content=WRITER_PROMPT),
+            *_conversation_messages(state),
+            HumanMessage(content=state["question"]),
+            HumanMessage(content="已验证材料：\n" + _json(prompt_data)),
+        ]
+        started = time.perf_counter()
+        response = self.model.invoke(messages)
+        if self.on_model_usage is not None:
+            self.on_model_usage(
+                model_usage_event(response, "writer", time.perf_counter() - started)
+            )
+
+        answer = _response_text(response)
+        if not answer:
+            raise RuntimeError("Writer 模型返回了空文本，无法生成最终答案。")
+
+        limitations = _writer_limitations(review, state.get("termination_reason"))
+        return {"final_answer": answer, "limitations": limitations}
+
+
+def _response_text(response: Any) -> str:
+    """Extract plain text from common LangChain message content shapes."""
+
+    content = getattr(response, "content", response)
+    if isinstance(content, str):
+        return content.strip()
+    if not isinstance(content, list):
+        return ""
+
+    parts: list[str] = []
+    for block in content:
+        if isinstance(block, str):
+            parts.append(block)
+        elif isinstance(block, dict) and isinstance(block.get("text"), str):
+            parts.append(block["text"])
+    return "\n".join(part.strip() for part in parts if part.strip()).strip()
+
+
+def _writer_limitations(
+    review: dict[str, Any], termination_reason: str | None
+) -> list[str]:
+    """Build user-visible limitations from validated state, not model formatting."""
+
+    limitations = [
+        *(f"缺失信息：{item}" for item in review.get("missing_information", []) if item),
+        *(f"证据矛盾：{item}" for item in review.get("contradictions", []) if item),
+    ]
+    termination_notes = {
+        "max_steps_reached": "调查已达最大步数，结论仅基于当前已验证证据。",
+        "repeated_tool_call": "检索路径出现重复，结论仅基于当前已验证证据。",
+    }
+    note = termination_notes.get(termination_reason)
+    if note:
+        limitations.append(note)
+    return _bounded_unique(limitations, MAX_UNRESOLVED_QUESTIONS)

@@ -18,7 +18,6 @@ from novel_agent.agent.nodes import AgentNodes
 from novel_agent.agent.routing import route_after_assessor, route_after_researcher
 from novel_agent.agent.schemas import (
     AssessmentOutput,
-    FinalAnswer,
     PlanOutput,
     ReplanOutput,
 )
@@ -32,6 +31,7 @@ class ScriptedChatModel(BaseChatModel):
     structured_bindings: ClassVar[list[tuple[type[Any], dict[str, Any]]]] = []
     structured_messages: ClassVar[dict[type[Any], list[BaseMessage]]] = {}
     research_messages: ClassVar[list[BaseMessage]] = []
+    writer_messages: ClassVar[list[BaseMessage]] = []
     assessment_chunk_id: ClassVar[str] = ""
 
     @property
@@ -45,6 +45,11 @@ class ScriptedChatModel(BaseChatModel):
         run_manager: Any = None,
         **kwargs: Any,
     ) -> ChatResult:
+        if messages and "小说解读写作者" in str(messages[0].content):
+            type(self).writer_messages = messages
+            return ChatResult(
+                generations=[ChatGeneration(message=AIMessage(content="基于现有证据完成。"))]
+            )
         type(self).research_messages = messages
         return ChatResult(
             generations=[
@@ -95,14 +100,12 @@ class ScriptedChatModel(BaseChatModel):
                 )
             if schema is ReplanOutput:
                 return ReplanOutput(tasks=[], rationale="无需重规划")
-            if schema is FinalAnswer:
-                return FinalAnswer(answer="基于现有证据完成。")
             raise AssertionError(f"unexpected schema: {schema}")
 
         return RunnableLambda(produce)
 
 
-def test_all_structured_nodes_capture_raw_responses(tmp_path) -> None:
+def test_decision_nodes_capture_raw_structured_responses(tmp_path) -> None:
     path = tmp_path / "sample.txt"
     path.write_text("第一章 开始\n\n人物在这里出现。" * 20, encoding="utf-8")
     corpus = NovelCorpus.from_path(path)
@@ -115,7 +118,6 @@ def test_all_structured_nodes_capture_raw_responses(tmp_path) -> None:
         PlanOutput,
         AssessmentOutput,
         ReplanOutput,
-        FinalAnswer,
     }
     assert all(
         options == {"method": "function_calling", "include_raw": True}
@@ -126,6 +128,7 @@ def test_all_structured_nodes_capture_raw_responses(tmp_path) -> None:
 def test_all_model_nodes_receive_conversation_history(corpus: NovelCorpus) -> None:
     ScriptedChatModel.structured_messages.clear()
     ScriptedChatModel.research_messages = []
+    ScriptedChatModel.writer_messages = []
     ScriptedChatModel.assessment_chunk_id = corpus.document.chunks[0].chunk_id
     nodes = AgentNodes(ScriptedChatModel(), build_tools(corpus), corpus)
     state = initial_state(
@@ -143,7 +146,8 @@ def test_all_model_nodes_receive_conversation_history(corpus: NovelCorpus) -> No
     message_sets = [
         ScriptedChatModel.research_messages,
         *(ScriptedChatModel.structured_messages[schema]
-          for schema in (PlanOutput, AssessmentOutput, ReplanOutput, FinalAnswer)),
+          for schema in (PlanOutput, AssessmentOutput, ReplanOutput)),
+        ScriptedChatModel.writer_messages,
     ]
     for messages in message_sets:
         contents = [str(message.content) for message in messages]
@@ -212,6 +216,27 @@ def test_full_graph_executes_tool_loop_with_scripted_model(tmp_path) -> None:
     assert len(result["tool_call_history"]) == 1
     assert result["tool_call_history"][0]["tool"] == "search_novel"
     assert result["termination_reason"] == "evidence_sufficient"
+
+
+def test_writer_uses_plain_markdown_and_deterministic_limitations(
+    corpus: NovelCorpus,
+) -> None:
+    nodes = AgentNodes(ScriptedChatModel(), build_tools(corpus), corpus)
+    state = initial_state("分析人物变化", 8)
+    state["review"] = {
+        "missing_information": ["缺少后续章节"],
+        "contradictions": ["两处叙述不一致"],
+    }
+    state["termination_reason"] = "max_steps_reached"
+
+    update = nodes.writer(state)
+
+    assert update["final_answer"] == "基于现有证据完成。"
+    assert update["limitations"] == [
+        "缺失信息：缺少后续章节",
+        "证据矛盾：两处叙述不一致",
+        "调查已达最大步数，结论仅基于当前已验证证据。",
+    ]
 
 
 def test_shared_execution_service_streams_updates(tmp_path) -> None:

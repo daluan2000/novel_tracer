@@ -1,10 +1,13 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '../api'
 import type { ConfigStatus, NovelInfo } from '../types'
 import AgentWorkspace from './AgentWorkspace.vue'
 
-const runActions = vi.hoisted(() => ({ retry: vi.fn() }))
+const runActions = vi.hoisted(() => ({
+  retry: vi.fn(),
+  viewOverride: null as Record<string, unknown> | null,
+}))
 
 vi.mock('../api', () => ({
   api: {
@@ -49,8 +52,8 @@ vi.mock('../api', () => ({
 vi.mock('../composables/useRun', async () => {
   const { reactive, ref } = await import('vue')
   return {
-    useRun: () => ({
-      view: reactive({
+    useRun: () => {
+      const defaultView = {
         status: 'failed', activeNode: 'assessor', visitedNodes: ['planner', 'tools'],
         error: '模型返回格式无效。',
         events: [{
@@ -75,10 +78,13 @@ vi.mock('../composables/useRun', async () => {
             },
           },
         },
-      }),
-      isRunning: ref(false), start: vi.fn(), startConversation: vi.fn(), restore: vi.fn(),
-      retry: runActions.retry, stop: vi.fn(), runId: ref('run-1'),
-    }),
+      }
+      return {
+        view: reactive(runActions.viewOverride ?? defaultView),
+        isRunning: ref(false), start: vi.fn(), startConversation: vi.fn(), restore: vi.fn(),
+        retry: runActions.retry, stop: vi.fn(), runId: ref('run-1'),
+      }
+    },
   }
 })
 
@@ -99,6 +105,11 @@ const config: ConfigStatus = {
 }
 
 describe('AgentWorkspace observability', () => {
+  beforeEach(() => {
+    runActions.retry.mockReset()
+    runActions.viewOverride = null
+  })
+
   it('shows token details and anomalies before a final answer exists', async () => {
     const wrapper = mount(AgentWorkspace, { props: { novel, config } })
     await flushPromises()
@@ -124,6 +135,42 @@ describe('AgentWorkspace observability', () => {
     await button!.trigger('click')
     expect(runActions.retry).toHaveBeenCalledOnce()
     expect(wrapper.text()).toContain('重新分析')
+  })
+
+  it('shows the completed current answer in the chat before another question', async () => {
+    runActions.viewOverride = {
+      status: 'completed', activeNode: 'writer', visitedNodes: ['planner', 'assessor', 'writer'],
+      error: null,
+      events: [{
+        sequence: 8, timestamp: '2026-10-08T08:37:00Z', type: 'complete', status: 'completed',
+        node: 'writer', error: null, detail: { label: '分析完成' }, snapshot: {},
+      }],
+      snapshot: {
+        plan: [], current_task_id: null, evidence: [], hypotheses: [],
+        unresolved_questions: [], suggested_queries: [], review: null,
+        step_count: 2, max_steps: 10, replan_count: 0, termination_reason: 'evidence_sufficient',
+        final_answer: '**即时结果**：主角已经完成调查。', limitations: ['仅基于已验证证据。'],
+        metrics: {
+          step_count: 2, model_call_count: 3, tool_call_count: 1,
+          evidence_count: 1, evidence_coverage: 1, structured_retry_count: 0,
+          content_fallback_count: 0,
+          token_usage: {
+            input_tokens: 100, output_tokens: 20, total_tokens: 120,
+            reasoning_tokens: 0, cached_tokens: 0, elapsed_seconds: 1,
+            reported_call_count: 3, unknown_call_count: 0, by_node: {},
+          },
+        },
+      },
+    }
+
+    const wrapper = mount(AgentWorkspace, { props: { novel, config } })
+    await flushPromises()
+
+    const currentTurn = wrapper.get('.current-turn')
+    expect(currentTurn.get('.current-answer').text()).toContain('即时结果')
+    expect(currentTurn.get('.current-answer').text()).toContain('仅基于已验证证据')
+    expect(wrapper.find('.answer-card').exists()).toBe(false)
+    expect(wrapper.html().indexOf('current-answer')).toBeLessThan(wrapper.html().indexOf('question-box'))
   })
 
   it('confirms and deletes the selected conversation', async () => {

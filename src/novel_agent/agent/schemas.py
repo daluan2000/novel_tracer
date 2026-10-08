@@ -69,10 +69,3 @@ class ReplanOutput(BaseModel):
 
     tasks: list[InvestigationTask]
     rationale: str
-
-
-class FinalAnswer(BaseModel):
-    """Writer 返回的用户答案，以及因材料不足产生的限制。"""
-
-    answer: str
-    limitations: list[str] = Field(default_factory=list)
