@@ -8,6 +8,7 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.runnables import RunnableLambda
 
 from novel_agent.agent.context import (
+    conversation_messages as _conversation_messages,
     is_simple_question,
     latest_tool_exchange as _latest_tool_exchange,
     research_history as _research_history,
@@ -29,6 +30,8 @@ from novel_agent.corpus.repository import NovelCorpus
 
 class ScriptedChatModel(BaseChatModel):
     structured_bindings: ClassVar[list[tuple[type[Any], dict[str, Any]]]] = []
+    structured_messages: ClassVar[dict[type[Any], list[BaseMessage]]] = {}
+    research_messages: ClassVar[list[BaseMessage]] = []
     assessment_chunk_id: ClassVar[str] = ""
 
     @property
@@ -42,6 +45,7 @@ class ScriptedChatModel(BaseChatModel):
         run_manager: Any = None,
         **kwargs: Any,
     ) -> ChatResult:
+        type(self).research_messages = messages
         return ChatResult(
             generations=[
                 ChatGeneration(
@@ -65,7 +69,8 @@ class ScriptedChatModel(BaseChatModel):
 
     def with_structured_output(self, schema: Any, **kwargs: Any) -> RunnableLambda:
         self.structured_bindings.append((schema, kwargs))
-        def produce(_: Any) -> Any:
+        def produce(messages: list[BaseMessage]) -> Any:
+            type(self).structured_messages[schema] = messages
             if schema is PlanOutput:
                 return PlanOutput(
                     tasks=[{"task_id": "T1", "description": "查找人物", "status": "pending"}]
@@ -102,6 +107,7 @@ def test_all_structured_nodes_capture_raw_responses(tmp_path) -> None:
     path.write_text("第一章 开始\n\n人物在这里出现。" * 20, encoding="utf-8")
     corpus = NovelCorpus.from_path(path)
     ScriptedChatModel.structured_bindings.clear()
+    ScriptedChatModel.structured_messages.clear()
 
     AgentNodes(ScriptedChatModel(), build_tools(corpus), corpus, structured_retries=0)
 
@@ -115,6 +121,34 @@ def test_all_structured_nodes_capture_raw_responses(tmp_path) -> None:
         options == {"method": "function_calling", "include_raw": True}
         for _, options in ScriptedChatModel.structured_bindings
     )
+
+
+def test_all_model_nodes_receive_conversation_history(corpus: NovelCorpus) -> None:
+    ScriptedChatModel.structured_messages.clear()
+    ScriptedChatModel.research_messages = []
+    ScriptedChatModel.assessment_chunk_id = corpus.document.chunks[0].chunk_id
+    nodes = AgentNodes(ScriptedChatModel(), build_tools(corpus), corpus)
+    state = initial_state(
+        "分析人物关系的变化",
+        8,
+        [{"question": "前一个问题", "answer": "前一个结论"}],
+    )
+
+    state.update(nodes.planner(state))
+    nodes.researcher(state)
+    nodes.assessor(state)
+    nodes.replanner(state)
+    nodes.writer(state)
+
+    message_sets = [
+        ScriptedChatModel.research_messages,
+        *(ScriptedChatModel.structured_messages[schema]
+          for schema in (PlanOutput, AssessmentOutput, ReplanOutput, FinalAnswer)),
+    ]
+    for messages in message_sets:
+        contents = [str(message.content) for message in messages]
+        assert "前一个问题" in contents
+        assert "前一个结论" in contents
 
 
 def test_researcher_routes_to_tools_for_tool_call() -> None:
@@ -228,6 +262,24 @@ def test_research_history_drops_processed_tool_results() -> None:
 
     assert isinstance(recent[0], HumanMessage)
     assert len(recent) == 1
+
+
+def test_conversation_history_is_bounded_role_correct_and_tool_free() -> None:
+    history = [
+        {"question": f"问题 {index}", "answer": f"答案 {index}"}
+        for index in range(12)
+    ]
+    state = initial_state("当前问题", 5, history)
+
+    messages = _conversation_messages(state)
+
+    assert len(state["conversation_history"]) == 10
+    assert state["conversation_history"][0]["question"] == "问题 2"
+    assert [type(message) for message in messages[:2]] == [HumanMessage, AIMessage]
+    assert messages[0].content == "问题 2"
+    assert messages[-1].content == "答案 11"
+    assert len(state["messages"]) == 1
+    assert state["messages"][0].content == "当前问题"
 
 
 def test_latest_tool_exchange_does_not_reuse_previous_result() -> None:

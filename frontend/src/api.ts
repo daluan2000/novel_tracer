@@ -1,5 +1,7 @@
 import type {
   ConfigStatus,
+  Conversation,
+  ConversationPage,
   NovelChunk,
   NovelInfo,
   NovelPage,
@@ -90,6 +92,46 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ novel_id: novelId, question, max_steps: maxSteps }),
+    })
+  },
+
+  conversations(novelId: string) {
+    return request<ConversationPage>(
+      `/api/novels/${encodeURIComponent(novelId)}/conversations`,
+    )
+  },
+
+  conversation(conversationId: string) {
+    return request<Conversation>(
+      `/api/conversations/${encodeURIComponent(conversationId)}`,
+    )
+  },
+
+  createConversation(novelId: string) {
+    return request<Conversation>('/api/conversations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ novel_id: novelId }),
+    })
+  },
+
+  deleteConversation(conversationId: string) {
+    return request<{ conversation_id: string; deleted: boolean }>(
+      `/api/conversations/${encodeURIComponent(conversationId)}`,
+      { method: 'DELETE' },
+    )
+  },
+
+  createConversationRun(conversationId: string, question: string, maxSteps: number) {
+    return request<{
+      conversation_id: string
+      turn_id: string
+      run_id: string
+      status: string
+    }>(`/api/conversations/${encodeURIComponent(conversationId)}/runs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question, max_steps: maxSteps }),
     })
   },
 

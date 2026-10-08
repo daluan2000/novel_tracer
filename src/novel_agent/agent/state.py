@@ -17,6 +17,7 @@ class AgentState(TypedDict):
     # 对话输入与模型/工具消息轨迹。
     messages: Annotated[list[AnyMessage], add_messages]
     question: str
+    conversation_history: list[dict[str, str]]
 
     # Planner 生成的任务清单，以及 Researcher 当前正在处理的任务。
     question_mode: str
@@ -52,12 +53,20 @@ class AgentState(TypedDict):
     token_usage: dict[str, Any]
 
 
-def initial_state(question: str, max_steps: int) -> AgentState:
+def initial_state(
+    question: str,
+    max_steps: int,
+    conversation_history: list[dict[str, str]] | None = None,
+) -> AgentState:
     """为一次全新的调查创建状态；旧问题的证据不会带入新问题。"""
 
     return {
         "messages": [HumanMessage(content=question)],
         "question": question,
+        "conversation_history": [
+            {"question": item["question"], "answer": item["answer"]}
+            for item in (conversation_history or [])[-10:]
+        ],
         "question_mode": "unknown",
         "plan": [],
         "current_task_id": None,

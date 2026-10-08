@@ -60,6 +60,20 @@ def research_history(messages: list[Any]) -> list[Any]:
     return [first_human] if first_human is not None else []
 
 
+def conversation_messages(state: AgentState) -> list[Any]:
+    """Convert persisted Q/A turns into role-correct, tool-free chat context."""
+
+    messages: list[Any] = []
+    for turn in state.get("conversation_history", [])[-10:]:
+        question = str(turn.get("question") or "").strip()
+        answer = str(turn.get("answer") or "").strip()
+        if question and answer:
+            messages.extend(
+                [HumanMessage(content=question), AIMessage(content=answer)]
+            )
+    return messages
+
+
 def evidence_summary(
     evidence: list[dict[str, Any]],
     *,

@@ -7,7 +7,7 @@ import threading
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from langgraph.checkpoint.memory import InMemorySaver
 
@@ -25,6 +25,9 @@ from novel_agent.web.events import (
     utc_now,
 )
 from novel_agent.web.store import StoredNovel
+
+if TYPE_CHECKING:
+    from novel_agent.web.conversations import ConversationStore
 
 Executor = Callable[..., AgentExecutionResult]
 LOGGER = logging.getLogger(__name__)
@@ -60,6 +63,9 @@ class RunRecord:
     novel_id: str
     question: str
     max_steps: int
+    conversation_id: str | None = None
+    turn_id: str | None = None
+    conversation_history: list[dict[str, str]] = field(default_factory=list)
     status: str = "queued"
     events: list[dict[str, Any]] = field(default_factory=list)
     snapshot: dict[str, Any] = field(default_factory=dict)
@@ -71,6 +77,9 @@ class RunRecord:
     checkpointer: InMemorySaver = field(default_factory=InMemorySaver, repr=False)
     telemetry: ExecutionTelemetry = field(default_factory=ExecutionTelemetry, repr=False)
     condition: threading.Condition = field(default_factory=threading.Condition)
+    event_sink: Callable[[dict[str, Any]], None] | None = field(
+        default=None, repr=False
+    )
 
     def emit(
         self,
@@ -96,6 +105,11 @@ class RunRecord:
             }
             self.events.append(event)
             self.condition.notify_all()
+        if self.event_sink is not None:
+            try:
+                self.event_sink(event)
+            except Exception:
+                LOGGER.exception("Failed to persist run event for %s", self.run_id)
 
     def event_at(self, index: int, timeout: float = 15.0) -> dict[str, Any] | None:
         with self.condition:
@@ -110,14 +124,31 @@ class RunManager:
         *,
         executor: Executor = execute_agent,
         model_factory: Callable[[], Any] | None = None,
+        conversations: ConversationStore | None = None,
     ):
         self.executor = executor
         self.model_factory = model_factory
+        self.conversations = conversations
         self._records: dict[str, RunRecord] = {}
         self._active_run_id: str | None = None
         self._lock = threading.Lock()
 
-    def start(self, novel: StoredNovel, question: str, max_steps: int) -> RunRecord:
+    def start(
+        self,
+        novel: StoredNovel,
+        question: str,
+        max_steps: int,
+        *,
+        conversation_id: str | None = None,
+    ) -> RunRecord:
+        history: list[dict[str, str]] = []
+        if conversation_id is not None:
+            if self.conversations is None:
+                raise RuntimeError("会话存储尚未配置。")
+            conversation = self.conversations.get(conversation_id)
+            if conversation["novel_id"] != novel.novel_id:
+                raise RuntimeError("会话关联的小说不匹配。")
+            history = self.conversations.history(conversation_id)
         with self._lock:
             if self._active_run_id:
                 active = self._records[self._active_run_id]
@@ -129,7 +160,19 @@ class RunManager:
                 novel_id=novel.novel_id,
                 question=question,
                 max_steps=max_steps,
+                conversation_id=conversation_id,
+                conversation_history=history,
             )
+            if conversation_id is not None and self.conversations is not None:
+                record.turn_id = self.conversations.start_turn(
+                    conversation_id,
+                    run_id=run_id,
+                    question=question,
+                    max_steps=max_steps,
+                )
+                record.event_sink = lambda event: self.conversations.record_event(
+                    conversation_id, run_id, event
+                )
             self._records[run_id] = record
             self._active_run_id = run_id
 
@@ -212,6 +255,7 @@ class RunManager:
                 checkpointer=record.checkpointer,
                 resume=resume,
                 telemetry=record.telemetry,
+                conversation_history=record.conversation_history,
                 **kwargs,
             )
             snapshot = public_snapshot(result.state)

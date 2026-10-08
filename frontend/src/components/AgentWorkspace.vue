@@ -4,7 +4,16 @@ import { computed, reactive, ref, watch } from 'vue'
 import { api } from '../api'
 import { useRun } from '../composables/useRun'
 import { timelineText } from '../timeline'
-import type { ConfigStatus, Evidence, NovelChunk, NovelInfo } from '../types'
+import type {
+  ConfigStatus,
+  Conversation,
+  ConversationSummary,
+  ConversationTurn,
+  Evidence,
+  NovelChunk,
+  NovelInfo,
+  RunSnapshot,
+} from '../types'
 import FlowGraph from './FlowGraph.vue'
 import RetrievalObservability from './RetrievalObservability.vue'
 
@@ -13,9 +22,13 @@ const emit = defineEmits<{ 'running-change': [running: boolean] }>()
 const question = ref('')
 const maxSteps = ref(props.config?.default_max_steps ?? 16)
 const localError = ref('')
+const conversations = ref<ConversationSummary[]>([])
+const activeConversation = ref<Conversation | null>(null)
+const conversationsLoading = ref(false)
+const expandedTurns = ref<Set<string>>(new Set())
 const contexts = reactive<Record<string, NovelChunk[]>>({})
 const openEvidence = ref<string | null>(null)
-const { view, isRunning, start, retry, stop } = useRun()
+const { view, isRunning, startConversation, restore, retry, stop } = useRun(handleRunTerminal)
 const markdown = new MarkdownIt({ html: false, linkify: true, breaks: true })
 const statusNames: Record<string, string> = {
   idle: '尚未开始', queued: '等待开始', running: '正在分析', stopping: '正在停止',
@@ -33,7 +46,14 @@ watch(isRunning, (value) => emit('running-change', value), { immediate: true })
 watch(() => props.novel.novel_id, () => {
   question.value = ''
   openEvidence.value = null
-})
+  activeConversation.value = null
+  conversations.value = []
+  restore(null)
+  void loadConversations()
+}, { immediate: true })
+
+const currentTurn = computed(() => activeConversation.value?.turns.at(-1) ?? null)
+const historicalTurns = computed(() => activeConversation.value?.turns.slice(0, -1) ?? [])
 
 const answerHtml = computed(() => markdown.render(view.snapshot?.final_answer || ''))
 const progress = computed(() => {
@@ -94,6 +114,117 @@ function formatTime(value?: string) {
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleTimeString('zh-CN', { hour12: false })
 }
 
+function formatDateTime(value: string) {
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime())
+    ? value
+    : parsed.toLocaleString('zh-CN', { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+}
+
+function selectedConversationKey(novelId: string) {
+  return `novel-agent:selected-conversation:${novelId}`
+}
+
+async function loadConversations(preferredId?: string) {
+  const novelId = props.novel.novel_id
+  conversationsLoading.value = true
+  localError.value = ''
+  try {
+    const page = await api.conversations(novelId)
+    if (props.novel.novel_id !== novelId) return
+    conversations.value = page.items
+    const savedId = localStorage.getItem(selectedConversationKey(novelId))
+    const targetId = page.items.find((item) => item.active_run_id)?.conversation_id
+      ?? preferredId
+      ?? (page.items.some((item) => item.conversation_id === savedId) ? savedId : null)
+      ?? page.items[0]?.conversation_id
+    if (targetId) await selectConversation(targetId)
+    else {
+      activeConversation.value = null
+      restore(null)
+    }
+  } catch (cause) {
+    localError.value = cause instanceof Error ? cause.message : '会话列表加载失败。'
+  } finally {
+    if (props.novel.novel_id === novelId) conversationsLoading.value = false
+  }
+}
+
+async function selectConversation(conversationId: string) {
+  if (isRunning.value && activeConversation.value?.conversation_id !== conversationId) return
+  localError.value = ''
+  try {
+    const conversation = await api.conversation(conversationId)
+    if (conversation.novel_id !== props.novel.novel_id) return
+    activeConversation.value = conversation
+    localStorage.setItem(selectedConversationKey(props.novel.novel_id), conversationId)
+    restore(conversation.turns.at(-1) ?? null)
+  } catch (cause) {
+    localError.value = cause instanceof Error ? cause.message : '会话加载失败。'
+  }
+}
+
+async function createConversation() {
+  if (isRunning.value) return
+  localError.value = ''
+  try {
+    const created = await api.createConversation(props.novel.novel_id)
+    await loadConversations(created.conversation_id)
+  } catch (cause) {
+    localError.value = cause instanceof Error ? cause.message : '新建会话失败。'
+  }
+}
+
+async function deleteActiveConversation() {
+  const conversation = activeConversation.value
+  if (!conversation || isRunning.value) return
+  if (!window.confirm(`确定删除“${conversation.title}”及其全部问答记录吗？`)) return
+  localError.value = ''
+  try {
+    await api.deleteConversation(conversation.conversation_id)
+    localStorage.removeItem(selectedConversationKey(props.novel.novel_id))
+    activeConversation.value = null
+    restore(null)
+    await loadConversations()
+  } catch (cause) {
+    localError.value = cause instanceof Error ? cause.message : '删除会话失败。'
+  }
+}
+
+function toggleTurn(turnId: string) {
+  const next = new Set(expandedTurns.value)
+  if (next.has(turnId)) next.delete(turnId)
+  else next.add(turnId)
+  expandedTurns.value = next
+}
+
+function turnAnswer(turn: ConversationTurn) {
+  return markdown.render(turnSnapshot(turn)?.final_answer || '')
+}
+
+function turnSnapshot(turn: ConversationTurn): RunSnapshot | null {
+  return Object.keys(turn.snapshot).length ? turn.snapshot as RunSnapshot : null
+}
+
+async function refreshConversation() {
+  const conversationId = activeConversation.value?.conversation_id
+  if (!conversationId) return
+  const conversation = await api.conversation(conversationId)
+  activeConversation.value = conversation
+  restore(conversation.turns.at(-1) ?? null)
+}
+
+async function handleRunTerminal() {
+  question.value = ''
+  try {
+    await refreshConversation()
+    const page = await api.conversations(props.novel.novel_id)
+    conversations.value = page.items
+  } catch (cause) {
+    localError.value = cause instanceof Error ? cause.message : '会话状态刷新失败。'
+  }
+}
+
 async function begin() {
   localError.value = ''
   if (!question.value.trim()) {
@@ -104,8 +235,17 @@ async function begin() {
     localError.value = '模型配置尚未就绪，请检查后端 .env。'
     return
   }
+  if (!activeConversation.value) {
+    localError.value = '请先新建一个会话。'
+    return
+  }
   try {
-    await start(props.novel.novel_id, question.value.trim(), maxSteps.value)
+    const value = question.value.trim()
+    await startConversation(activeConversation.value.conversation_id, value, maxSteps.value)
+    const conversation = await api.conversation(activeConversation.value.conversation_id)
+    activeConversation.value = conversation
+    const page = await api.conversations(props.novel.novel_id)
+    conversations.value = page.items
   } catch (cause) {
     localError.value = cause instanceof Error ? cause.message : '任务启动失败。'
   }
@@ -134,22 +274,99 @@ async function toggleEvidence(evidence: Evidence) {
 
 <template>
   <section class="workspace-panel agent-panel">
+    <div class="conversation-layout">
+      <aside class="conversation-sidebar">
+        <div class="conversation-sidebar-heading">
+          <div><p class="mini-title">多轮提问</p><strong>会话</strong></div>
+          <button class="conversation-add" :disabled="isRunning" title="新建会话" @click="createConversation">＋</button>
+        </div>
+        <p v-if="conversationsLoading" class="conversation-loading">正在加载会话…</p>
+        <div v-else-if="!conversations.length" class="conversation-empty">还没有会话</div>
+        <button
+          v-for="item in conversations"
+          v-else
+          :key="item.conversation_id"
+          class="conversation-item"
+          :class="{ active: item.conversation_id === activeConversation?.conversation_id }"
+          :disabled="isRunning && item.conversation_id !== activeConversation?.conversation_id"
+          @click="selectConversation(item.conversation_id)"
+        >
+          <strong>{{ item.title }}</strong>
+          <span>{{ item.turn_count }} 轮 · {{ formatDateTime(item.updated_at) }}</span>
+          <small v-if="item.active_run_id">正在分析</small>
+        </button>
+      </aside>
+
+      <div class="conversation-main">
+        <p v-if="localError || view.error" class="form-error conversation-error" role="alert">{{ localError || view.error }}</p>
+
+        <div v-if="!activeConversation" class="conversation-onboarding">
+          <span>问</span>
+          <h2>开始一段新的分析对话</h2>
+          <p>每一轮都会保留答案、证据和调查过程，后续问题可引用最近 10 轮结论。</p>
+          <button class="button primary" :disabled="conversationsLoading" @click="createConversation">新建会话</button>
+        </div>
+
+        <template v-else>
+          <header class="conversation-header">
+            <div><p class="mini-title">当前会话</p><h2>{{ activeConversation.title }}</h2></div>
+            <button class="text-button delete-conversation" :disabled="isRunning" @click="deleteActiveConversation">删除会话</button>
+          </header>
+
+          <div v-if="historicalTurns.length" class="conversation-history">
+            <article v-for="turn in historicalTurns" :key="turn.turn_id" class="history-turn">
+              <div class="chat-bubble user-bubble"><small>你 · {{ formatDateTime(turn.created_at) }}</small><p>{{ turn.question }}</p></div>
+              <div class="chat-bubble assistant-bubble">
+                <div class="history-answer-heading"><small>Novel Lens · {{ statusNames[turn.status] }}</small><span>{{ turn.events.length }} events</span></div>
+                <div v-if="turnSnapshot(turn)?.final_answer" class="markdown-body compact" v-html="turnAnswer(turn)"></div>
+                <p v-else class="history-error">{{ turn.error || '这一轮没有生成最终答案。' }}</p>
+                <button class="text-button" @click="toggleTurn(turn.turn_id)">{{ expandedTurns.has(turn.turn_id) ? '收起分析过程' : '查看分析过程' }}</button>
+                <div v-if="expandedTurns.has(turn.turn_id)" class="history-details">
+                  <div class="history-stats">
+                    <span>计划 {{ turnSnapshot(turn)?.plan.length ?? 0 }} 项</span>
+                    <span>证据 {{ turnSnapshot(turn)?.evidence.length ?? 0 }} 条</span>
+                    <span>模型调用 {{ turnSnapshot(turn)?.metrics.model_call_count ?? 0 }} 次</span>
+                    <span>调查步数 {{ turnSnapshot(turn)?.step_count ?? 0 }}</span>
+                  </div>
+                  <div v-if="turnSnapshot(turn)?.plan.length" class="history-plan">
+                    <div v-for="task in turnSnapshot(turn)?.plan" :key="task.task_id"><code>{{ task.task_id }}</code><span>{{ task.description }}</span><small>{{ taskStatusNames[task.status] }}</small></div>
+                  </div>
+                  <dl v-if="turnSnapshot(turn)?.metrics.token_usage" class="history-metrics">
+                    <div><dt>输入 Token</dt><dd>{{ turnSnapshot(turn)?.metrics.token_usage?.input_tokens.toLocaleString() }}</dd></div>
+                    <div><dt>输出 Token</dt><dd>{{ turnSnapshot(turn)?.metrics.token_usage?.output_tokens.toLocaleString() }}</dd></div>
+                    <div><dt>总 Token</dt><dd>{{ turnSnapshot(turn)?.metrics.token_usage?.total_tokens.toLocaleString() }}</dd></div>
+                    <div><dt>模型耗时</dt><dd>{{ turnSnapshot(turn)?.metrics.token_usage?.elapsed_seconds.toFixed(2) }} 秒</dd></div>
+                  </dl>
+                  <ol v-if="turn.events.length" class="history-events">
+                    <li v-for="event in turn.events" :key="event.sequence"><code>#{{ event.sequence }}</code>{{ timelineText(event) }}</li>
+                  </ol>
+                  <div v-if="turnSnapshot(turn)?.evidence.length" class="history-evidence">
+                    <blockquote v-for="evidence in turnSnapshot(turn)?.evidence" :key="evidence.evidence_id">“{{ evidence.quote }}”<small>{{ evidence.claim }} · Ln {{ evidence.start_line }}–{{ evidence.end_line }}</small></blockquote>
+                  </div>
+                  <ul v-if="turnSnapshot(turn)?.limitations.length" class="history-limitations"><li v-for="item in turnSnapshot(turn)?.limitations" :key="item">{{ item }}</li></ul>
+                </div>
+              </div>
+            </article>
+          </div>
+
+          <div v-if="currentTurn" class="chat-bubble user-bubble current-question">
+            <small>你 · {{ formatDateTime(currentTurn.created_at) }}</small><p>{{ currentTurn.question }}</p>
+          </div>
+
     <div class="question-box">
       <label class="field grow"><span>想了解什么</span><textarea v-model="question" rows="3" placeholder="例如：分析人物关系如何变化，并给出关键阶段、原文依据和反面证据。" :disabled="isRunning" /></label>
       <label class="field step-field"><span>最多调查步数</span><input v-model.number="maxSteps" type="number" min="1" max="100" :disabled="isRunning" /></label>
       <button v-if="canRetry && !isRunning" class="button secondary start-button" @click="retryFailedNode">从 {{ failedNodeName }} 重试</button>
-      <button v-if="!isRunning" class="button primary start-button" @click="begin">{{ view.status === 'failed' ? '重新分析' : '开始分析' }} <span aria-hidden="true">→</span></button>
+      <button v-if="!isRunning" class="button primary start-button" @click="begin">{{ view.status === 'failed' ? '重新分析' : currentTurn ? '继续提问' : '开始分析' }} <span aria-hidden="true">→</span></button>
       <button v-else class="button danger start-button" :disabled="view.status === 'stopping'" @click="stop">{{ view.status === 'stopping' ? '正在结束当前步骤…' : '停止分析' }}</button>
     </div>
-    <p v-if="localError || view.error" class="form-error" role="alert">{{ localError || view.error }}</p>
-
-    <div class="run-header">
+    <div v-if="currentTurn || view.status !== 'idle'" class="run-header">
       <div><p class="eyebrow">实时分析</p><h2>调查进展</h2></div>
       <div class="run-status" :class="`status-${view.status}`"><span></span>{{ view.status }} · {{ statusNames[view.status] }}</div>
     </div>
-    <div class="progress-track" role="progressbar" :aria-valuenow="progress" aria-valuemin="0" aria-valuemax="100"><span :style="{ width: `${progress}%` }"></span></div>
+    <div v-if="currentTurn || view.status !== 'idle'" class="progress-track" role="progressbar" :aria-valuenow="progress" aria-valuemin="0" aria-valuemax="100"><span :style="{ width: `${progress}%` }"></span></div>
 
-    <div class="investigation-grid">
+    <div v-if="currentTurn || view.status !== 'idle'" class="investigation-grid">
       <div class="flow-card">
         <FlowGraph :active-node="view.activeNode" :visited-nodes="view.visitedNodes" :failed="view.status === 'failed'" />
         <div v-if="view.snapshot?.plan.length" class="plan-list">
@@ -229,6 +446,9 @@ async function toggleEvidence(evidence: Evidence) {
             <p v-for="chunk in contexts[evidence.evidence_id]" :key="chunk.chunk_id" :class="{ focused: chunk.chunk_id === evidence.chunk_id }"><span>Ln {{ chunk.start_line }}–{{ chunk.end_line }}</span>{{ chunk.text }}</p>
           </div>
         </article>
+      </div>
+    </div>
+        </template>
       </div>
     </div>
   </section>

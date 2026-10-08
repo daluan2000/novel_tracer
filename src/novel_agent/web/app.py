@@ -22,6 +22,7 @@ from novel_agent.runtime.config import (
     structured_output_retries,
 )
 from novel_agent.web.events import TERMINAL_STATUSES
+from novel_agent.web.conversations import ConversationStore
 from novel_agent.web.runs import Executor, RunManager
 from novel_agent.web.store import MAX_UPLOAD_BYTES, NovelStore, StoredNovel
 
@@ -38,6 +39,19 @@ class RunRequest(BaseModel):
 
 class EmbeddingToggleRequest(BaseModel):
     enabled: bool
+
+
+class ConversationRequest(BaseModel):
+    novel_id: str = Field(min_length=1, max_length=128)
+
+
+class ConversationRunRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=4000)
+    max_steps: int = Field(
+        default_factory=lambda: min(max(default_max_steps(), 1), 100),
+        ge=1,
+        le=100,
+    )
 
 
 def novel_info(item: StoredNovel) -> dict[str, Any]:
@@ -62,15 +76,24 @@ def create_app(
     upload_limit: int = MAX_UPLOAD_BYTES,
     data_root: str | Path | None = None,
 ) -> FastAPI:
+    resolved_data_root = (
+        Path(data_root) if data_root is not None else novel_agent_data_dir()
+    )
     store = NovelStore(
         upload_limit=upload_limit,
-        data_root=data_root if data_root is not None else novel_agent_data_dir(),
+        data_root=resolved_data_root,
     )
-    runs = RunManager(executor=executor, model_factory=model_factory)
+    conversations = ConversationStore(resolved_data_root)
+    runs = RunManager(
+        executor=executor,
+        model_factory=model_factory,
+        conversations=conversations,
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         await store.open()
+        conversations.open()
         try:
             yield
         finally:
@@ -78,6 +101,7 @@ def create_app(
 
     app = FastAPI(title="Novel Agent Web", version="0.2.0", lifespan=lifespan)
     app.state.novels = store
+    app.state.conversations = conversations
     app.state.runs = runs
 
     @app.get("/api/config")
@@ -225,15 +249,78 @@ def create_app(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return {"run_id": record.run_id, "status": record.status}
 
+    @app.post("/api/conversations", status_code=201)
+    def create_conversation(request: ConversationRequest) -> dict[str, Any]:
+        try:
+            store.get(request.novel_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc.args[0])) from exc
+        return conversations.create(request.novel_id)
+
+    @app.get("/api/novels/{novel_id}/conversations")
+    def list_conversations(novel_id: str) -> dict[str, Any]:
+        try:
+            store.get(novel_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc.args[0])) from exc
+        items = conversations.list_for_novel(novel_id)
+        return {"items": items, "total": len(items)}
+
+    @app.get("/api/conversations/{conversation_id}")
+    def get_conversation(conversation_id: str) -> dict[str, Any]:
+        try:
+            return conversations.get(conversation_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc.args[0])) from exc
+
+    @app.delete("/api/conversations/{conversation_id}")
+    def delete_conversation(conversation_id: str) -> dict[str, Any]:
+        try:
+            conversations.delete(conversation_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc.args[0])) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {"conversation_id": conversation_id, "deleted": True}
+
+    @app.post("/api/conversations/{conversation_id}/runs", status_code=202)
+    def start_conversation_run(
+        conversation_id: str, request: ConversationRunRequest
+    ) -> dict[str, Any]:
+        question = request.question.strip()
+        if not question:
+            raise HTTPException(status_code=400, detail="问题不能为空。")
+        try:
+            conversation = conversations.get(conversation_id)
+            novel = store.get(conversation["novel_id"])
+            record = runs.start(
+                novel,
+                question,
+                request.max_steps,
+                conversation_id=conversation_id,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc.args[0])) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {
+            "conversation_id": conversation_id,
+            "turn_id": record.turn_id,
+            "run_id": record.run_id,
+            "status": record.status,
+        }
+
     @app.get("/api/runs/{run_id}/events")
-    async def stream_events(run_id: str) -> StreamingResponse:
+    async def stream_events(
+        run_id: str, after: int = Query(0, ge=0)
+    ) -> StreamingResponse:
         try:
             record = runs.get(run_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc.args[0])) from exc
 
         async def generate():
-            index = 0
+            index = after
             while True:
                 event = await asyncio.to_thread(record.event_at, index)
                 if event is not None:

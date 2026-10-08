@@ -1,5 +1,6 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
+import { api } from '../api'
 import type { ConfigStatus, NovelInfo } from '../types'
 import AgentWorkspace from './AgentWorkspace.vue'
 
@@ -8,6 +9,27 @@ const runActions = vi.hoisted(() => ({ retry: vi.fn() }))
 vi.mock('../api', () => ({
   api: {
     context: vi.fn(),
+    conversations: vi.fn().mockResolvedValue({
+      items: [{
+        conversation_id: 'conversation-1', novel_id: 'book-1', title: '人物关系如何变化',
+        created_at: '2026-09-28T00:00:00Z', updated_at: '2026-09-28T01:00:00Z',
+        turn_count: 1, latest_status: 'failed', active_run_id: null,
+      }],
+      total: 1,
+    }),
+    conversation: vi.fn().mockResolvedValue({
+      version: 1, conversation_id: 'conversation-1', novel_id: 'book-1', title: '人物关系如何变化',
+      created_at: '2026-09-28T00:00:00Z', updated_at: '2026-09-28T01:00:00Z',
+      turns: [{
+        turn_id: 'turn-1', run_id: 'run-1', question: '人物关系如何变化？', max_steps: 10,
+        status: 'failed', created_at: '2026-09-28T00:00:00Z', updated_at: '2026-09-28T01:00:00Z',
+        completed_at: '2026-09-28T01:00:00Z', events: [], snapshot: {},
+        error: '模型返回格式无效。', retryable: true, resumable: true,
+      }],
+    }),
+    createConversation: vi.fn(),
+    deleteConversation: vi.fn(),
+    createConversationRun: vi.fn(),
     retrievalStatus: vi.fn().mockResolvedValue({
       status: 'hybrid_ready', active_mode: 'hybrid', embedding_enabled: true, passage_count: 20,
       embedding_model: 'embedding-test', error_code: null,
@@ -54,7 +76,8 @@ vi.mock('../composables/useRun', async () => {
           },
         },
       }),
-      isRunning: ref(false), start: vi.fn(), retry: runActions.retry, stop: vi.fn(), runId: ref('run-1'),
+      isRunning: ref(false), start: vi.fn(), startConversation: vi.fn(), restore: vi.fn(),
+      retry: runActions.retry, stop: vi.fn(), runId: ref('run-1'),
     }),
   }
 })
@@ -87,6 +110,8 @@ describe('AgentWorkspace observability', () => {
     expect(wrapper.text()).toContain('语义检索用量与运行状态')
     expect(wrapper.text()).toContain('Embedding 已构建完成')
     expect(wrapper.text()).toContain('100%')
+    expect(wrapper.text()).toContain('人物关系如何变化')
+    expect(wrapper.text()).toContain('当前会话')
     expect(wrapper.text()).not.toContain('证据型解读')
   })
 
@@ -99,5 +124,20 @@ describe('AgentWorkspace observability', () => {
     await button!.trigger('click')
     expect(runActions.retry).toHaveBeenCalledOnce()
     expect(wrapper.text()).toContain('重新分析')
+  })
+
+  it('confirms and deletes the selected conversation', async () => {
+    vi.stubGlobal('confirm', vi.fn(() => true))
+    vi.mocked(api.deleteConversation).mockResolvedValue({
+      conversation_id: 'conversation-1', deleted: true,
+    })
+    const wrapper = mount(AgentWorkspace, { props: { novel, config } })
+    await flushPromises()
+
+    await wrapper.get('.delete-conversation').trigger('click')
+    await flushPromises()
+
+    expect(window.confirm).toHaveBeenCalledOnce()
+    expect(api.deleteConversation).toHaveBeenCalledWith('conversation-1')
   })
 })

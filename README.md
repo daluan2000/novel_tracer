@@ -36,6 +36,7 @@ Novel Agent 面向小说及其他长篇文本的深度分析场景，将文档�
 
 ### 可观测 Web 工作台
 
+- 每本小说支持多个持久化会话和连续追问；后续问题使用最近 10 个成功轮次的问题与最终答案作为上下文。
 - 实时展示 Agent 节点图、调查计划、工具调用、执行时间线、证据与最终答案。
 - 按节点统计模型输入、输出、思考与缓存 token，并展示耗时、异常、重试和降级记录。
 - 提供小说管理、章节浏览、文本检索、Embedding 索引构建与消耗监控。
@@ -249,6 +250,7 @@ novel-agent
 
 - 拖拽或选择 TXT，并查看编码、章节与 Chunk 概览。
 - 自动恢复已保存的小说，并在多本小说之间切换。
+- 新建、切换和删除按小说隔离的多轮会话；刷新页面后可恢复全部问答、证据、指标与事件，运行中的任务会自动重连。
 - 分页浏览识别出的章节结构。
 - 支持降级的 BM25/Embedding 混合检索与上下文展开。
 - 实时显示 Agent 节点图、调查计划、执行时间线、证据和最终答案。
@@ -260,10 +262,10 @@ novel-agent
 
 ### 本地数据与外部请求
 
-- 上传的 TXT、Manifest 与向量缓存分别保存在 `<NOVEL_AGENT_DATA_DIR>/novels` 和 `<NOVEL_AGENT_DATA_DIR>/indexes`，这两个目录默认位于 `output`，且已被 Git 忽略。
+- 上传的 TXT、Manifest、向量缓存与多轮会话分别保存在 `<NOVEL_AGENT_DATA_DIR>/novels`、`<NOVEL_AGENT_DATA_DIR>/indexes` 和 `<NOVEL_AGENT_DATA_DIR>/conversations`，这些目录默认位于 `output`，且已被 Git 忽略。
 - Agent 调查时，问题、任务摘要以及检索到的必要原文会发送给聊天模型服务；启用 Embedding 后，系统会将全部约 500 字的 Passage 分批发送给所配置的 Embedding 服务。
 - 每次 Agent 运行的 JSONL 节点轨迹写入 `output/traces/<run_id>.jsonl`。轨迹可能包含问题、工具参数、工具结果和模型输出，不应提交到版本库或公开分享。
-- `NOVEL_AGENT_DATA_DIR` 当前不改变轨迹目录；备份可恢复语料和向量缓存，但不能恢复已结束或中断的 Agent 运行状态。
+- `NOVEL_AGENT_DATA_DIR` 当前不改变轨迹目录；备份可恢复语料、向量缓存和已保存的会话历史。节点重试 checkpoint 仅存在于当前服务进程，服务重启时尚未结束的轮次会标记为中断且不可恢复。
 
 ## 工具
 

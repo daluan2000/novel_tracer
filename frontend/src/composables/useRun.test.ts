@@ -6,6 +6,7 @@ import { useRun } from './useRun'
 
 const apiMock = vi.hoisted(() => ({
   createRun: vi.fn(),
+  createConversationRun: vi.fn(),
   retryRun: vi.fn(),
   cancelRun: vi.fn(),
 }))
@@ -50,6 +51,9 @@ describe('useRun manual retry', () => {
     FakeEventSource.instances = []
     vi.stubGlobal('EventSource', FakeEventSource)
     apiMock.createRun.mockReset().mockResolvedValue({ run_id: 'run-1', status: 'queued' })
+    apiMock.createConversationRun.mockReset().mockResolvedValue({
+      conversation_id: 'conversation-1', turn_id: 'turn-1', run_id: 'run-2', status: 'queued',
+    })
     apiMock.retryRun.mockReset().mockResolvedValue({
       run_id: 'run-1', status: 'queued', failed_node: 'assessor', manual_retry_count: 1,
     })
@@ -90,6 +94,34 @@ describe('useRun manual retry', () => {
     resumed.emit(event(6, { type: 'complete', status: 'completed', node: 'writer' }))
     expect(resumed.closed).toBe(true)
     expect(run.view.status).toBe('completed')
+    wrapper.unmount()
+  })
+
+  it('restores persisted events and resumes after the last sequence', async () => {
+    const terminal = vi.fn()
+    let run!: ReturnType<typeof useRun>
+    const wrapper = mount(defineComponent({
+      setup() {
+        run = useRun(terminal)
+        return () => h('div')
+      },
+    }))
+    run.restore({
+      turn_id: 'turn-1', run_id: 'run-1', question: '追问', max_steps: 5,
+      status: 'running', created_at: '2026-09-30T00:00:00Z', updated_at: '2026-09-30T00:00:00Z',
+      completed_at: null, error: null, retryable: false, resumable: false, snapshot: {},
+      events: [
+        event(1, { status: 'queued' }),
+        event(2, { type: 'update', status: 'running', node: 'planner' }),
+      ],
+    })
+
+    expect(run.view.events).toHaveLength(2)
+    expect(FakeEventSource.instances[0].url).toContain('after=2')
+    FakeEventSource.instances[0].emit(event(3, {
+      type: 'complete', status: 'completed', node: 'writer',
+    }))
+    expect(terminal).toHaveBeenCalledOnce()
     wrapper.unmount()
   })
 })

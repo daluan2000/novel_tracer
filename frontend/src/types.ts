@@ -210,3 +210,45 @@ export interface RunEvent {
   snapshot: RunSnapshot | Record<string, never>
   error: string | null
 }
+
+export interface ConversationSummary {
+  conversation_id: string
+  novel_id: string
+  title: string
+  created_at: string
+  updated_at: string
+  turn_count: number
+  latest_status: Exclude<RunStatus, 'idle' | 'stopping'> | null
+  active_run_id: string | null
+}
+
+export interface ConversationPage {
+  items: ConversationSummary[]
+  total: number
+}
+
+export interface ConversationTurn {
+  turn_id: string
+  run_id: string
+  question: string
+  max_steps: number
+  status: Exclude<RunStatus, 'idle'>
+  created_at: string
+  updated_at: string
+  completed_at: string | null
+  events: RunEvent[]
+  snapshot: RunSnapshot | Record<string, never>
+  error: string | null
+  retryable: boolean
+  resumable: boolean
+}
+
+export interface Conversation {
+  version: number
+  conversation_id: string
+  novel_id: string
+  title: string
+  created_at: string
+  updated_at: string
+  turns: ConversationTurn[]
+}

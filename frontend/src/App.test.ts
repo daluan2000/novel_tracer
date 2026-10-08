@@ -8,6 +8,9 @@ vi.mock('./api', () => ({
     config: vi.fn(), novels: vi.fn(), uploadNovel: vi.fn(), sections: vi.fn(),
     search: vi.fn(), context: vi.fn(), retrievalStatus: vi.fn(),
     setEmbeddingEnabled: vi.fn(), createRun: vi.fn(), cancelRun: vi.fn(),
+    conversations: vi.fn().mockResolvedValue({ items: [], total: 0 }),
+    conversation: vi.fn(), createConversation: vi.fn(), deleteConversation: vi.fn(),
+    createConversationRun: vi.fn(), retryRun: vi.fn(),
   },
 }))
 

@@ -13,6 +13,7 @@ from langchain_core.tools import BaseTool
 from novel_agent.agent.context import (
     bounded_unique as _bounded_unique,
     compact_json as _json,
+    conversation_messages as _conversation_messages,
     current_task as _current_task,
     decode_tool_result as _tool_result,
     evidence_summary as _evidence_summary,
@@ -115,7 +116,11 @@ class AgentNodes:
 
         output = self._invoke_structured(
             self.plan_model,
-            [SystemMessage(content=PLANNER_PROMPT), HumanMessage(content=state["question"])],
+            [
+                SystemMessage(content=PLANNER_PROMPT),
+                *_conversation_messages(state),
+                HumanMessage(content=state["question"]),
+            ],
             PlanOutput,
             "planner",
         )
@@ -163,6 +168,7 @@ class AgentNodes:
         }
         messages = [
             SystemMessage(content=RESEARCHER_PROMPT),
+            *_conversation_messages(state),
             *_research_history(state["messages"]),
             HumanMessage(content="当前状态：\n" + _json(context)),
         ]
@@ -214,6 +220,7 @@ class AgentNodes:
             self.assess_model,
             [
                 SystemMessage(content=ASSESSOR_PROMPT),
+                *_conversation_messages(state),
                 HumanMessage(content=state["question"]),
                 HumanMessage(content="当前状态与当轮工具结果：\n" + _json(prompt_data)),
             ],
@@ -388,6 +395,7 @@ class AgentNodes:
             self.replan_model,
             [
                 SystemMessage(content=REPLANNER_PROMPT),
+                *_conversation_messages(state),
                 HumanMessage(content=state["question"]),
                 HumanMessage(content="当前调查摘要：\n" + _json(prompt_data)),
             ],
@@ -426,6 +434,7 @@ class AgentNodes:
             self.writer_model,
             [
                 SystemMessage(content=WRITER_PROMPT),
+                *_conversation_messages(state),
                 HumanMessage(content=state["question"]),
                 HumanMessage(content="已验证材料：\n" + _json(prompt_data)),
             ],

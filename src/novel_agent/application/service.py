@@ -68,6 +68,7 @@ def execute_agent(
     checkpointer: InMemorySaver | None = None,
     resume: bool = False,
     telemetry: ExecutionTelemetry | None = None,
+    conversation_history: list[dict[str, str]] | None = None,
 ) -> AgentExecutionResult:
     """执行一次 Agent 图，并把节点级事件暴露给 Web 层。
 
@@ -83,7 +84,9 @@ def execute_agent(
         "recursion_limit": max_steps * 5 + 20,
     }
     trace = TraceWriter(trace_path) if trace_path is not None else None
-    current_state: dict[str, Any] = dict(initial_state(question, max_steps))
+    current_state: dict[str, Any] = dict(
+        initial_state(question, max_steps, conversation_history)
+    )
     execution_telemetry = telemetry or ExecutionTelemetry()
 
     def state_with_diagnostics(state: dict[str, Any]) -> dict[str, Any]:
@@ -143,7 +146,9 @@ def execute_agent(
         # updates 模式每经过一个节点就产生一次 {node_name: changed_fields}。
         # get_state 再从 checkpoint 取得合并后的完整状态，方便 UI 画时间线。
         for event in graph.stream(
-            None if resume else initial_state(question, max_steps),
+            None
+            if resume
+            else initial_state(question, max_steps, conversation_history),
             config=config,
             stream_mode="updates",
         ):
