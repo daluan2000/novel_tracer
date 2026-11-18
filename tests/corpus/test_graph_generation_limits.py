@@ -7,8 +7,8 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-from novel_agent.corpus.knowledge_graph.extraction import validate_batch, windows
-from novel_agent.corpus.knowledge_graph.models import ExtractionBatch
+from novel_agent.corpus.knowledge_graph.extraction import validate_batch, windows, compact_window, validate_compact_batch
+from novel_agent.corpus.knowledge_graph.models import ExtractionBatch, CompactExtractionBatch
 from novel_agent.corpus.knowledge_graph.service import KnowledgeGraphService
 from novel_agent.corpus.knowledge_graph.storage import encode
 from novel_agent.corpus.repository import NovelCorpus
@@ -29,7 +29,8 @@ def test_long_window_is_split_without_repeating_unbounded_request(tmp_path, monk
         def with_structured_output(self, schema, **kwargs):
             def invoke(messages):
                 import json
-                core = json.loads(messages[1].content)["spans"][0]["text"]
+                payload = json.loads(messages[1].content)
+                core = "".join(s["text"] for s in payload["segments"] if s["region"] == "core") if "segments" in payload else payload["spans"][0]["text"]
                 calls.append(core)
                 if len(core) > 1000:
                     if failure == "timeout":
@@ -39,7 +40,7 @@ def test_long_window_is_split_without_repeating_unbounded_request(tmp_path, monk
                     raw = SimpleNamespace(response_metadata={"finish_reason": "length"},
                         usage_metadata={"input_tokens": 100, "output_tokens": 6144, "total_tokens": 6244})
                     return {"raw": raw, "parsed": None, "parsing_error": ValueError("partial JSON")}
-                return ExtractionBatch()
+                return {}
             return SimpleNamespace(invoke=invoke)
     with TestClient(create_app(data_root=tmp_path, graph_model_factory=DenseModel)) as client:
         novel = upload(client, "张三走过山路。" * 220)
@@ -157,3 +158,61 @@ def test_legacy_timeout_resume_preserves_completed_unit_and_splits_failed_unit(t
             assert db.execute("SELECT COUNT(*) FROM graph_attempts WHERE unit_id=?", (failed.unit_id,)).fetchone()[0] == 2
     finally:
         service.close()
+
+
+def test_compact_evidence_ids_are_mapped_to_verified_source(corpus):
+    window, payload = compact_window(corpus, windows(corpus)[0])
+    segment = next(s for s in payload["segments"] if s["region"] == "core" and "吕树" in s["text"] and "吕小鱼" in s["text"])
+    batch = CompactExtractionBatch.model_validate({
+        "entities": [
+            {"local_id": "a", "name": "吕树", "type": "person", "span_id": segment["id"]},
+            {"local_id": "b", "name": "吕小鱼", "type": "person", "span_id": segment["id"]}],
+        "relations": [
+            {"source": "a", "target": "b", "type": "knows", "evidence_ids": [segment["id"]]},
+            {"source": "a", "target": "b", "type": "friend_of", "evidence_ids": ["fabricated-id"]}]})
+    result = validate_compact_batch(corpus, window, batch)
+    assert len(result["entities"]) == 2 and len(result["relations"]) == 1
+    assert result["rejected"]["relations"] == 1
+    span = result["relations"][0]["evidence"][0]
+    assert span["quote"] == segment["text"]
+    assert corpus.document.source.text[span["start_char"]:span["end_char"]] == span["quote"]
+    assert corpus.validate_quote(span["chunk_id"], span["quote"])
+    assert result["extraction_format"] == "compact-v1"
+    assert all(len(s["text"]) <= 180 for s in payload["segments"])
+
+
+def test_976_character_window_recovers_and_replays_smaller_split_after_restart(tmp_path, monkeypatch):
+    import json
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    calls, entered, release = [], threading.Event(), threading.Event()
+    class DenseModel:
+        def with_structured_output(self, schema, **kwargs):
+            def invoke(messages):
+                payload = json.loads(messages[1].content)
+                calls.append(schema is CompactExtractionBatch)
+                if len(calls) <= 2:
+                    raw = SimpleNamespace(response_metadata={"finish_reason": "length"}, usage_metadata={"input_tokens": 100, "output_tokens": 6144})
+                    return {"raw": raw, "parsed": None, "parsing_error": None}
+                if len(calls) == 4:
+                    entered.set()
+                    assert release.wait(3)
+                return {}
+            return SimpleNamespace(invoke=invoke)
+    root = tmp_path / "data"
+    with TestClient(create_app(data_root=root, graph_model_factory=DenseModel)) as client:
+        novel = upload(client, "张三认识李四。" + "风" * (976 - len("张三认识李四。")))
+        base = f"/api/novels/{novel}/graph"
+        job = client.post(base + "/builds", json={"mode": "start"}).json()
+        assert entered.wait(5)
+        client.post(base + f"/builds/{job['job_id']}/stop")
+        release.set()
+        stopped = wait_job(client, novel, "stopped")
+        assert stopped["job"]["extraction"] == {"completed": 2, "total": 2}
+        with client.app.state.knowledge_graph.storage.connect() as db:
+            parent = db.execute("SELECT result_json FROM graph_units WHERE version=? AND unit_id='extract:0:0'", (job["graph_version"],)).fetchone()
+            assert json.loads(parent[0])["split_min_chars"] == 200
+        assert calls == [False, True, True, True]
+    with TestClient(create_app(data_root=root, graph_model_factory=DenseModel)) as client:
+        client.post(base + "/builds", json={"mode": "resume", "job_id": job["job_id"]})
+        wait_job(client, novel)
+        assert len(calls) == 4

@@ -22,7 +22,7 @@ const phases = { extracting: '抽取实体与关系', resolving: '实体身份�
 const states = { queued: '等待构建', building: '构建中', stopping: '等待当前请求结束', completed: '已完成', failed: '构建失败', stopped: '已停止' }
 const buildErrors: Record<string, string> = {
   graph_model_timeout: '当前片段的模型请求超时。已完成批次已保存，点击“继续构建”可复用结果，并自动缩小较大的失败片段。',
-  graph_model_output_limit: '当前片段的模型输出达到上限。已保留进度；较大的抽取片段会自动拆分，最小片段仍失败时可调整图谱输出预算后继续。',
+  graph_model_output_limit: '当前片段的模型输出未完整返回。已保存完成的批次；继续构建会使用片段编号精简抽取，并自动缩小较大的片段。',
   graph_model_authentication_failed: '模型服务鉴权失败，请检查 API Key 后继续构建。',
   graph_model_rate_limited: '模型服务请求受限，请稍后继续构建。',
   graph_model_connection_failed: '无法连接模型服务，请检查网络及服务地址后继续。',
@@ -32,7 +32,20 @@ const eventLabels: Record<string, string> = {
   graph_model_timeout_retry: '模型请求超时，正在有限重试',
   graph_extraction_timeout_split: '超时片段已拆为较小片段',
   graph_extraction_output_split: '模型输出达到上限，已自动缩小片段',
+  graph_extraction_compact_fallback: '已切换为精简抽取，使用片段编号引用原文',
   graph_extraction_capacity_split: '实体或关系较密集，已自动拆分片段',
+  graph_model_output_limit: '模型响应达到输出上限，未形成完整结果',
+  graph_model_timeout: '模型请求超时',
+  structured_output_retry: '模型返回格式不完整，正在重试',
+}
+function eventLabel(code: string) {
+  if (eventLabels[code]) return eventLabels[code]
+  const rejected = /^(rejected_entities|rejected_relations|rejected_identity_links):(\d+)$/.exec(code)
+  if (rejected) {
+    const kinds: Record<string, string> = { rejected_entities: '实体', rejected_relations: '关系', rejected_identity_links: '身份线索' }
+    return `过滤了 ${rejected[2]} 个未通过校验的${kinds[rejected[1]!]}`
+  }
+  return code
 }
 const labels = computed(() => Object.fromEntries(status.value?.ontology.relation_types.map(r => [r.type, r.label]) || []))
 const symmetric = computed(() => status.value?.ontology.relation_types.filter(r => r.symmetric).map(r => r.type) || [])
@@ -153,7 +166,7 @@ onBeforeUnmount(() => { disposed = true; chapterSequence++; evidenceSequence++; 
         </template>
         <button class="text-button" :disabled="busy" @click="graph.refresh()">刷新状态</button>
       </div>
-      <details v-if="status.job?.events.length"><summary>构建诊断（最近 {{ status.job.events.length }} 条）</summary><ul><li v-for="(event, i) in status.job.events" :key="i">{{ eventLabels[event.code] || event.code }}</li></ul></details>
+      <details v-if="status.job?.events.length"><summary>构建诊断（最近 {{ status.job.events.length }} 条）</summary><small>过滤项是校验后未采纳的候选；本次停止原因见上方提示。</small><ul><li v-for="(event, i) in status.job.events" :key="i">{{ eventLabel(event.code) }}</li></ul></details>
     </div>
     <div v-else class="empty-state"><p>正在读取图谱状态…</p></div>
 

@@ -55,6 +55,35 @@ class ExtractionBatch(StrictModel):
     identity_links: list[IdentityLink] = Field(default_factory=list)
 
 
+class CompactEntity(StrictModel):
+    local_id: str
+    name: str = Field(min_length=1, max_length=100)
+    type: Literal["person", "place", "organization", "item", "skill", "concept"]
+    span_id: str
+    occurrence: int = Field(default=1, ge=1)
+
+
+class CompactRelation(StrictModel):
+    source: str
+    target: str
+    type: str
+    evidence_ids: list[str] = Field(min_length=1, max_length=3)
+    polarity: Literal["affirmed", "denied"] = "affirmed"
+    statement_mode: Literal["narration", "character_claim"] = "narration"
+
+
+class CompactIdentityLink(StrictModel):
+    source: str
+    target: str
+    evidence_ids: list[str] = Field(min_length=1, max_length=3)
+
+
+class CompactExtractionBatch(StrictModel):
+    entities: list[CompactEntity] = Field(default_factory=list)
+    relations: list[CompactRelation] = Field(default_factory=list)
+    identity_links: list[CompactIdentityLink] = Field(default_factory=list)
+
+
 class ResolutionDecision(StrictModel):
     decision: Literal["merge", "new", "ambiguous"]
     candidate_id: str | None = None

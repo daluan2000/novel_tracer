@@ -27,6 +27,24 @@ beforeEach(() => {
 })
 
 describe('KnowledgeGraphPanel', () => {
+  it('explains output-limit recovery and filtered candidates in readable diagnostics', async () => {
+    vi.mocked(graphApi.status).mockResolvedValue({ ...status, job: {
+      job_id: 'j', graph_version: 'v1', status: 'failed', phase: 'extracting', stop_requested: false,
+      can_resume: true, error_code: 'graph_model_output_limit', extraction: { completed: 4, total: 419 },
+      resolution: { completed: 0, total: 0 }, entity_count: 0, relation_count: 0, elapsed_seconds: 182,
+      usage: { request_count: 8, reported_input_tokens: 23277, reported_output_tokens: 27822, unknown_request_count: 0, failed_request_count: 3 },
+      events: [{ code: 'graph_model_output_limit', level: 'error', created_at: '' },
+        { code: 'rejected_relations:8', level: 'warning', created_at: '' },
+        { code: 'graph_extraction_compact_fallback', level: 'warning', created_at: '' }],
+    } })
+    const wrapper = mount(KnowledgeGraphPanel, { props: { novel }, global: { stubs: { KnowledgeGraphCanvas: true } } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('片段编号精简抽取')
+    expect(wrapper.text()).toContain('过滤了 8 个未通过校验的关系')
+    expect(wrapper.text()).not.toContain('graph_model_output_limit')
+    expect(wrapper.text()).not.toContain('rejected_relations')
+    wrapper.unmount()
+  })
   it('explains timed-out usage and resumes saved batches instead of rebuilding', async () => {
     const job: GraphJob = {
       job_id: 'saved-job', graph_version: 'v1', status: 'failed', phase: 'extracting',

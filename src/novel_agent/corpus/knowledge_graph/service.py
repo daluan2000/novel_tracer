@@ -15,8 +15,9 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from novel_agent.runtime.config import ModelConfig, structured_output_retries, graph_request_timeout_seconds, graph_request_retries, graph_max_output_tokens
 from novel_agent.runtime.structured_output import invoke_structured
-from .extraction import EXTRACTION_PROMPT, validate_batch, windows, split_window
-from .models import ExtractionBatch, GraphError, GraphOutputLimitError, ResolutionDecision
+from .extraction import (EXTRACTION_PROMPT, COMPACT_EXTRACTION_PROMPT, validate_batch,
+    validate_compact_batch, compact_window, windows, split_window)
+from .models import ExtractionBatch, CompactExtractionBatch, GraphError, GraphOutputLimitError, ResolutionDecision
 from .ontology import PARSER_VERSION, RULE_VERSION, digest, ontology_payload
 from .query import GraphReadSession
 from .resolution import RESOLUTION_PROMPT, resolve
@@ -325,46 +326,70 @@ class KnowledgeGraphService:
         graph_config = replace(config, request_timeout_seconds=graph_request_timeout_seconds(config.request_timeout_seconds))
         model = self.model_factory() if self.model_factory else graph_config.create_model(max_retries=0, max_tokens=graph_max_output_tokens())
         batches = []
-        def split_extract(w, sequence, reason):
-            children = split_window(corpus, w)
+        with self.storage.connect() as db:
+            prefer_compact = bool(db.execute("SELECT 1 FROM graph_attempts WHERE version=? AND error_code='graph_model_output_limit' LIMIT 1", (job["version"],)).fetchone())
+            compact_event = db.execute("SELECT 1 FROM graph_events WHERE job_id=? AND code='graph_extraction_compact_fallback' LIMIT 1", (job["job_id"],)).fetchone()
+        if prefer_compact and not compact_event:
+            self.storage.event(job["job_id"], "graph_extraction_compact_fallback", "warning")
+        def split_extract(w, sequence, reason, min_chars=500):
+            children = split_window(corpus, w, min_chars=min_chars)
             self.storage.split_unit(job["version"], w.unit_id,
-                [(child.unit_id, digest(child.payload(corpus))) for child in children], sequence)
+                [(child.unit_id, digest(child.payload(corpus))) for child in children], sequence, min_chars=min_chars)
             self.storage.event(job["job_id"], reason, "warning")
             for child in children:
                 extract(child, sequence)
 
         def extract(w, sequence):
+            nonlocal prefer_compact
             self._check_stop(job)
             saved = self.storage.unit(job["version"], w.unit_id)
             if saved and saved["status"] == "completed":
                 batches.append(saved["result"])
                 return
             if saved and saved["status"] == "split":
-                for child in split_window(corpus, w):
+                for child in split_window(corpus, w, min_chars=saved["result"].get("split_min_chars", 500)):
                     extract(child, sequence)
                 return
             if not saved:
                 self.storage.save_unit(job["version"], w.unit_id, "extract", sequence, digest(w.payload(corpus)), {}, "pending")
-            can_split = w.end - w.start >= 1000
             previous_error = saved["result"].get("last_error_code") if saved else None
-            if can_split and previous_error in {"graph_model_timeout", "graph_model_output_limit"}:
-                split_extract(w, sequence, "graph_extraction_output_split" if previous_error == "graph_model_output_limit" else "graph_extraction_timeout_split")
+            if previous_error == "graph_model_output_limit":
+                prefer_compact = True
+            use_compact = prefer_compact
+            minimum = 200 if use_compact else 500
+            can_split = w.end - w.start >= minimum * 2
+            if can_split and previous_error == "graph_model_timeout":
+                split_extract(w, sequence, "graph_extraction_timeout_split", minimum)
                 return
             try:
-                batch = self._invoke(job, model, w.unit_id, ExtractionBatch, EXTRACTION_PROMPT, w.payload(corpus),
+                input_window, payload = compact_window(corpus, w) if use_compact else (w, w.payload(corpus))
+                batch = self._invoke(job, model, w.unit_id,
+                    CompactExtractionBatch if use_compact else ExtractionBatch,
+                    COMPACT_EXTRACTION_PROMPT if use_compact else EXTRACTION_PROMPT, payload,
                     timeout_retries=0 if can_split else None)
             except Exception as exc:
                 if not is_model_timeout(exc) and not is_output_limit(exc):
                     raise
                 self._check_stop(job)
+                if is_output_limit(exc):
+                    prefer_compact = True
+                    if not use_compact:
+                        self.storage.event(job["job_id"], "graph_extraction_compact_fallback", "warning")
+                        if w.end - w.start >= 1000:
+                            split_extract(w, sequence, "graph_extraction_output_split", 200)
+                        else:
+                            extract(w, sequence)
+                        return
                 if not can_split:
                     raise
-                split_extract(w, sequence, "graph_extraction_output_split" if is_output_limit(exc) else "graph_extraction_timeout_split")
+                split_extract(w, sequence, "graph_extraction_output_split" if is_output_limit(exc) else "graph_extraction_timeout_split", minimum)
                 return
-            if len(batch.entities) > 80 or len(batch.relations) > 120 or len(batch.identity_links) > 40:
-                split_extract(w, sequence, "graph_extraction_capacity_split")
+            limits = (32, 48, 12) if use_compact else (80, 120, 40)
+            sizes = tuple(len(items) for items in (batch.entities, batch.relations, batch.identity_links))
+            if any(size >= limit if use_compact else size > limit for size, limit in zip(sizes, limits)):
+                split_extract(w, sequence, "graph_extraction_capacity_split", minimum)
                 return
-            result = validate_batch(corpus, w, batch)
+            result = validate_compact_batch(corpus, input_window, batch) if use_compact else validate_batch(corpus, w, batch)
             for entity in result["entities"]:
                 entity["contexts"] = []
                 for mention in entity["mentions"][:2]:
