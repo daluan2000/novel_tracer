@@ -316,16 +316,17 @@ def test_resolution_does_not_merge_homonyms_without_a_decision():
 def test_oversized_extraction_splits_and_publishes_empty_graph(tmp_path, monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     calls = []
+    names = ["神" + chr(0x4E00 + i) for i in range(81)]
     class DenseModel:
         def with_structured_output(self, schema, **kwargs):
             def invoke(messages):
                 text = json.loads(messages[1].content)["spans"][0]["text"]
                 calls.append(len(text))
-                entity = {"local_id": "a", "name": "张三", "type": "person", "mentions": [{"span_id": "core", "quote": "张三"}]}
-                return {"entities": [entity] * 81 if len(text) > 1000 else []}
+                entities = [{"local_id": f"e{i}", "name": name, "type": "person", "mentions": [{"span_id": "core", "quote": name}]} for i, name in enumerate(names)]
+                return {"entities": entities if len(text) > 1000 else []}
             return SimpleNamespace(invoke=invoke)
     with TestClient(create_app(data_root=tmp_path, graph_model_factory=DenseModel)) as client:
-        novel = upload(client, "张三走过山路。" * 400)
+        novel = upload(client, ("、".join(names) + "。") * 12)
         client.post(f"/api/novels/{novel}/graph/builds", json={"mode": "start"})
         status = wait_job(client, novel)
         assert max(calls) > 1000 and min(calls) <= 1000

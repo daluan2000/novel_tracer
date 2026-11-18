@@ -26,7 +26,7 @@ export interface GraphJob {
   status: 'queued' | 'building' | 'stopping' | 'completed' | 'failed' | 'stopped'
   phase: 'extracting' | 'resolving' | 'materializing' | 'publishing'
   stop_requested: boolean; can_resume: boolean; error_code: string | null
-  extraction: { completed: number; total: number }; resolution: { completed: number; total: number }
+  extraction: { completed: number; total: number; cached?: number }; resolution: { completed: number; total: number }
   entity_count: number; relation_count: number; elapsed_seconds: number
   usage: { request_count: number; reported_input_tokens: number; reported_output_tokens: number; unknown_request_count: number; failed_request_count: number }
   events: Array<{ code: string; level: string; created_at: string }>

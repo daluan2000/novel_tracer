@@ -27,6 +27,9 @@ const buildErrors: Record<string, string> = {
   graph_model_rate_limited: '模型服务请求受限，请稍后继续构建。',
   graph_model_connection_failed: '无法连接模型服务，请检查网络及服务地址后继续。',
   service_interrupted: '服务已重启，已保存完成的批次，点击“继续构建”可恢复。',
+  graph_build_failed: '构建处理发生异常，已保存完成的批次。请查看构建诊断及后端日志后继续。',
+  graph_extraction_processing_failed: '抽取结果处理失败，模型成功返回的候选已缓存。修复后继续构建可复用缓存。',
+  graph_checkpoint_invalid: '已缓存的片段与当前原文或数据格式不匹配，请检查图谱数据。',
 }
 const eventLabels: Record<string, string> = {
   graph_model_timeout_retry: '模型请求超时，正在有限重试',
@@ -34,12 +37,16 @@ const eventLabels: Record<string, string> = {
   graph_extraction_output_split: '模型输出达到上限，已自动缩小片段',
   graph_extraction_compact_fallback: '已切换为精简抽取，使用片段编号引用原文',
   graph_extraction_capacity_split: '实体或关系较密集，已自动拆分片段',
+  graph_extraction_capacity_saved: '最小片段实体或关系较密集，已保存所有通过校验的候选',
+  graph_build_failed: '构建处理发生异常，请查看后端日志',
   graph_model_output_limit: '模型响应达到输出上限，未形成完整结果',
   graph_model_timeout: '模型请求超时',
   structured_output_retry: '模型返回格式不完整，正在重试',
 }
 function eventLabel(code: string) {
   if (eventLabels[code]) return eventLabels[code]
+  const failure = /^graph_processing_failure:(.+):([A-Za-z_][A-Za-z0-9_]*)$/.exec(code)
+  if (failure) return `片段 ${failure[1]} 处理失败（${failure[2]}），候选结果已缓存`
   const rejected = /^(rejected_entities|rejected_relations|rejected_identity_links):(\d+)$/.exec(code)
   if (rejected) {
     const kinds: Record<string, string> = { rejected_entities: '实体', rejected_relations: '关系', rejected_identity_links: '身份线索' }
@@ -153,6 +160,7 @@ onBeforeUnmount(() => { disposed = true; chapterSequence++; evidenceSequence++; 
       <div v-if="status.job" class="graph-progress" aria-live="polite">
         <strong>{{ states[status.job.status] }} · {{ phases[status.job.phase] }}</strong>
         <span>抽取 {{ status.job.extraction.completed }}/{{ status.job.extraction.total }} · 消歧 {{ status.job.resolution.completed }}/{{ status.job.resolution.total }} · {{ status.job.elapsed_seconds.toFixed(1) }} 秒</span>
+        <small v-if="status.job.extraction.cached">另有 {{ status.job.extraction.cached }} 批成功返回的候选已缓存，继续处理可复用。</small>
         <small>批次可能按文本密度细分；只有发布完成才表示全流程完成。</small>
         <span>{{ status.job.usage.request_count }} 次模型请求 · 已报告输入 {{ status.job.usage.reported_input_tokens }} / 输出 {{ status.job.usage.reported_output_tokens }} token<span v-if="status.job.usage.unknown_request_count"> · {{ status.job.usage.unknown_request_count }} 次请求用量未知</span></span>
         <small v-if="status.job.usage.unknown_request_count">超时或供应商未返回用量的请求无法统计 token，可能已产生消耗；继续构建会复用已完成批次。</small>

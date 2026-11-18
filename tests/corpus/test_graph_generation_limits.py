@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import threading
 from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 
-from novel_agent.corpus.knowledge_graph.extraction import validate_batch, windows, compact_window, validate_compact_batch
+from novel_agent.corpus.knowledge_graph.extraction import validate_batch, windows, compact_window, validate_compact_batch, core_candidate_counts
 from novel_agent.corpus.knowledge_graph.models import ExtractionBatch, CompactExtractionBatch
 from novel_agent.corpus.knowledge_graph.service import KnowledgeGraphService
 from novel_agent.corpus.knowledge_graph.storage import encode
@@ -216,3 +217,97 @@ def test_976_character_window_recovers_and_replays_smaller_split_after_restart(t
         client.post(base + "/builds", json={"mode": "resume", "job_id": job["job_id"]})
         wait_job(client, novel)
         assert len(calls) == 4
+
+
+@pytest.mark.parametrize("compact,count", [(False, 81), (True, 32)])
+def test_minimum_dense_window_keeps_all_valid_candidates(tmp_path, monkeypatch, compact, count):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    names = ["神" + chr(0x4E00 + i) for i in range(count)]
+    body = "、".join(names) + "。"
+    body += "风" * (258 - len(body))
+    calls = []
+    class DenseModel:
+        def with_structured_output(self, schema, **kwargs):
+            def invoke(messages):
+                payload = json.loads(messages[1].content)
+                calls.append(schema.__name__)
+                if compact and schema is ExtractionBatch:
+                    raw = SimpleNamespace(response_metadata={"finish_reason": "length"}, usage_metadata={"input_tokens": 100, "output_tokens": 6144})
+                    return {"raw": raw, "parsed": None, "parsing_error": None}
+                if schema is CompactExtractionBatch:
+                    return {"entities": [{"local_id": f"e{i}", "name": name, "type": "person",
+                        "span_id": next(s["id"] for s in payload["segments"] if s["region"] == "core" and name in s["text"])}
+                        for i, name in enumerate(names)]}
+                return {"entities": [{"local_id": f"e{i}", "name": name, "type": "person",
+                    "mentions": [{"span_id": "core", "quote": name}]} for i, name in enumerate(names)]}
+            return SimpleNamespace(invoke=invoke)
+    with TestClient(create_app(data_root=tmp_path, graph_model_factory=DenseModel)) as client:
+        novel = upload(client, body)
+        client.post(f"/api/novels/{novel}/graph/builds", json={"mode": "start"})
+        status = wait_job(client, novel)
+        assert status["counts"]["entity_count"] == count
+        assert status["job"]["extraction"] == {"completed": 1, "total": 1}
+        assert "graph_extraction_capacity_saved" in {e["code"] for e in status["job"]["events"]}
+        result = client.app.state.knowledge_graph.storage.unit(status["active_version"], "extract:0:0")["result"]
+        assert len(result["entities"]) == count
+        assert result["diagnostics"]["capacity_saturated"] is True
+        assert result["diagnostics"]["core_chars"] == 258
+        assert len(calls) == (2 if compact else 1)
+
+
+def test_successful_model_result_is_reused_after_processing_failure(tmp_path, monkeypatch):
+    import novel_agent.corpus.knowledge_graph.service as graph_service
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    original = graph_service.validate_batch
+    def processing_error(*args, **kwargs):
+        raise ValueError("local processing failed")
+    monkeypatch.setattr(graph_service, "validate_batch", processing_error)
+    model = ScriptModel()
+    with TestClient(create_app(data_root=tmp_path, graph_model_factory=lambda: model)) as client:
+        novel = upload(client, "张三拜李四为师。")
+        base = f"/api/novels/{novel}/graph"
+        client.post(base + "/builds", json={"mode": "start"})
+        failed = wait_job(client, novel, "failed")
+        assert failed["job"]["error_code"] == "graph_extraction_processing_failed"
+        assert failed["job"]["extraction"] == {"completed": 0, "total": 1, "cached": 1}
+        cached = client.app.state.knowledge_graph.storage.unit(failed["job"]["graph_version"], "extract:0:0")
+        assert cached["status"] == "extracted" and cached["result"]["batch"]["entities"]
+        assert len(model.calls) == 1
+        monkeypatch.setattr(graph_service, "validate_batch", original)
+        client.post(base + "/builds", json={"mode": "resume", "job_id": failed["job"]["job_id"]})
+        completed = wait_job(client, novel)
+        assert len(model.calls) == 1
+        assert completed["counts"] == {"entity_count": 2, "relation_count": 1}
+        assert completed["job"]["usage"]["request_count"] == 1
+
+
+def test_density_ignores_repeated_facts_and_context_only_entities():
+    window = SimpleNamespace(start=100, end=200)
+    def entity(local_id, name, position):
+        return {"local_id": local_id, "name": name, "type": "person", "mentions": [{"start_char": position, "end_char": position + 2}]}
+    relation = {"source": "a", "target": "b", "type": "knows", "polarity": "affirmed", "statement_mode": "narration"}
+    result = {"entities": [entity("a", "张三", 110), entity("same-a", "张三", 110), entity("b", "李四", 50)],
+        "relations": [relation, {**relation, "source": "same-a"}], "identity_links": []}
+    assert core_candidate_counts(result, window) == {"entities": 1, "relations": 1, "identity_links": 0}
+
+
+def test_invalid_cached_candidates_do_not_trigger_another_model_request(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    source = tmp_path / "novel.txt"
+    source.write_text("张三拜李四为师。", encoding="utf-8")
+    corpus = NovelCorpus.from_path(source)
+    item = SimpleNamespace(novel_id="book", corpus=corpus, source_hash=hashlib.sha256(corpus.document.source.text.encode()).hexdigest())
+    service = KnowledgeGraphService(tmp_path / "data", SimpleNamespace(get=lambda key: item), ScriptModel)
+    service.storage.open()
+    try:
+        job, _ = service.build("book")
+        version = job["graph_version"]
+        window = windows(corpus)[0]
+        saved = service.storage.unit(version, window.unit_id)
+        service.storage.save_unit(version, window.unit_id, "extract", 0, saved["input_hash"], {}, "extracted")
+        with pytest.raises(ValueError, match="已缓存片段"):
+            service._run(service.storage.job("book"))
+        with service.storage.connect() as db:
+            assert db.execute("SELECT COUNT(*) FROM graph_attempts").fetchone()[0] == 0
+    finally:
+        service.close()

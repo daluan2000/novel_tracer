@@ -162,6 +162,28 @@ def validate_compact_batch(corpus: NovelCorpus, window: Window, batch: CompactEx
     return result
 
 
+def core_candidate_counts(result: dict, window: Window) -> dict[str, int]:
+    """Density is a heuristic over distinct, validated core facts, not array size.
+
+    Context-only entities and repeated references must not cause paid re-extraction.
+    This does not trim the returned candidates; they all remain in the result.
+    """
+    identities = {}
+    core_entities = set()
+    for entity in result["entities"]:
+        identity = (entity["type"], entity["name"], tuple(sorted(
+            (mention["start_char"], mention["end_char"]) for mention in entity["mentions"])))
+        identities[entity["local_id"]] = identity
+        if any(window.start <= mention["start_char"] < window.end for mention in entity["mentions"]):
+            core_entities.add(identity)
+    relations = {(identities[r["source"]], r["type"], identities[r["target"]], r["polarity"], r["statement_mode"])
+                 for r in result["relations"]}
+    links = {tuple(sorted((identities[link["source"]], identities[link["target"]])))
+             for link in result["identity_links"]
+             if any(window.start <= span["start_char"] < window.end for span in link["evidence"])}
+    return {"entities": len(core_entities), "relations": len(relations), "identity_links": len(links)}
+
+
 def locate(corpus: NovelCorpus, window: Window, anchor: Anchor) -> dict:
     bounds = window.spans.get(anchor.span_id)
     if bounds is None:

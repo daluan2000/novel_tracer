@@ -27,6 +27,24 @@ beforeEach(() => {
 })
 
 describe('KnowledgeGraphPanel', () => {
+  it('shows cached candidates and local processing diagnostics without blaming model configuration', async () => {
+    vi.mocked(graphApi.status).mockResolvedValue({ ...status, job: {
+      job_id: 'j', graph_version: 'v1', status: 'failed', phase: 'extracting', stop_requested: false,
+      can_resume: true, error_code: 'graph_extraction_processing_failed', extraction: { completed: 35, total: 429, cached: 1 },
+      resolution: { completed: 0, total: 0 }, entity_count: 0, relation_count: 0, elapsed_seconds: 655,
+      usage: { request_count: 52, reported_input_tokens: 183023, reported_output_tokens: 98494, unknown_request_count: 0, failed_request_count: 0 },
+      events: [{ code: 'graph_processing_failure:extract:25:0:a:a:b:ValueError', level: 'error', created_at: '' },
+        { code: 'graph_extraction_capacity_saved', level: 'warning', created_at: '' }],
+    } })
+    const wrapper = mount(KnowledgeGraphPanel, { props: { novel }, global: { stubs: { KnowledgeGraphCanvas: true } } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('另有 1 批成功返回的候选已缓存')
+    expect(wrapper.text()).toContain('修复后继续构建可复用缓存')
+    expect(wrapper.text()).toContain('片段 extract:25:0:a:a:b 处理失败（ValueError）')
+    expect(wrapper.text()).toContain('已保存所有通过校验的候选')
+    expect(wrapper.text()).not.toContain('请检查模型配置后继续')
+    wrapper.unmount()
+  })
   it('explains output-limit recovery and filtered candidates in readable diagnostics', async () => {
     vi.mocked(graphApi.status).mockResolvedValue({ ...status, job: {
       job_id: 'j', graph_version: 'v1', status: 'failed', phase: 'extracting', stop_requested: false,

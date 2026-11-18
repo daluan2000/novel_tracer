@@ -6,6 +6,7 @@ import sqlite3
 import threading
 import time
 import uuid
+import traceback
 from dataclasses import replace
 from pathlib import Path
 from typing import Callable
@@ -16,7 +17,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from novel_agent.runtime.config import ModelConfig, structured_output_retries, graph_request_timeout_seconds, graph_request_retries, graph_max_output_tokens
 from novel_agent.runtime.structured_output import invoke_structured
 from .extraction import (EXTRACTION_PROMPT, COMPACT_EXTRACTION_PROMPT, validate_batch,
-    validate_compact_batch, compact_window, windows, split_window)
+    validate_compact_batch, core_candidate_counts, compact_window, windows, split_window)
 from .models import ExtractionBatch, CompactExtractionBatch, GraphError, GraphOutputLimitError, ResolutionDecision
 from .ontology import PARSER_VERSION, RULE_VERSION, digest, ontology_payload
 from .query import GraphReadSession
@@ -178,8 +179,11 @@ class KnowledgeGraphService:
             totals = json.loads(version_row["counts_json"])
             events = [dict(e) for e in db.execute("SELECT code,level,created_at FROM graph_events WHERE job_id=? ORDER BY event_id DESC LIMIT 50", (job["job_id"],))]
         def progress(kind):
-            return {"completed": counts.get((kind, "completed"), 0),
-                    "total": sum(n for (k, state), n in counts.items() if k == kind and state != "split")}
+            result = {"completed": counts.get((kind, "completed"), 0),
+                      "total": sum(n for (k, state), n in counts.items() if k == kind and state != "split")}
+            if counts.get((kind, "extracted"), 0):
+                result["cached"] = counts[(kind, "extracted")]
+            return result
         elapsed = job["elapsed_seconds"]
         clock = self.running_since
         if clock and clock[0] == job["job_id"]:
@@ -331,10 +335,11 @@ class KnowledgeGraphService:
             compact_event = db.execute("SELECT 1 FROM graph_events WHERE job_id=? AND code='graph_extraction_compact_fallback' LIMIT 1", (job["job_id"],)).fetchone()
         if prefer_compact and not compact_event:
             self.storage.event(job["job_id"], "graph_extraction_compact_fallback", "warning")
-        def split_extract(w, sequence, reason, min_chars=500):
+        def split_extract(w, sequence, reason, min_chars=500, candidate_counts=None):
             children = split_window(corpus, w, min_chars=min_chars)
             self.storage.split_unit(job["version"], w.unit_id,
-                [(child.unit_id, digest(child.payload(corpus))) for child in children], sequence, min_chars=min_chars)
+                [(child.unit_id, digest(child.payload(corpus))) for child in children], sequence,
+                min_chars=min_chars, candidate_counts=candidate_counts)
             self.storage.event(job["job_id"], reason, "warning")
             for child in children:
                 extract(child, sequence)
@@ -352,21 +357,38 @@ class KnowledgeGraphService:
                 return
             if not saved:
                 self.storage.save_unit(job["version"], w.unit_id, "extract", sequence, digest(w.payload(corpus)), {}, "pending")
+            cached = saved["result"] if saved and saved["status"] == "extracted" else None
+            if cached is not None and not isinstance(cached, dict):
+                raise GraphError("graph_checkpoint_invalid", "已缓存的候选结构不兼容，请检查图谱数据。")
             previous_error = saved["result"].get("last_error_code") if saved else None
             if previous_error == "graph_model_output_limit":
                 prefer_compact = True
-            use_compact = prefer_compact
+            use_compact = cached.get("format") == "compact-v1" if cached is not None else prefer_compact
             minimum = 200 if use_compact else 500
             can_split = w.end - w.start >= minimum * 2
-            if can_split and previous_error == "graph_model_timeout":
+            if cached is None and can_split and previous_error == "graph_model_timeout":
                 split_extract(w, sequence, "graph_extraction_timeout_split", minimum)
                 return
             try:
                 input_window, payload = compact_window(corpus, w) if use_compact else (w, w.payload(corpus))
-                batch = self._invoke(job, model, w.unit_id,
-                    CompactExtractionBatch if use_compact else ExtractionBatch,
-                    COMPACT_EXTRACTION_PROMPT if use_compact else EXTRACTION_PROMPT, payload,
-                    timeout_retries=0 if can_split else None)
+                schema = CompactExtractionBatch if use_compact else ExtractionBatch
+                if cached is not None:
+                    if saved["input_hash"] != digest(w.payload(corpus)) or cached.get("format") not in {"compact-v1", "full-v1"}:
+                        raise GraphError("graph_checkpoint_invalid", "已缓存片段与当前原文或格式不匹配。")
+                    try:
+                        batch = schema.model_validate(cached["batch"])
+                    except (KeyError, ValueError, TypeError) as exc:
+                        raise GraphError("graph_checkpoint_invalid", "已缓存的候选结构不兼容，请检查图谱数据。") from exc
+                else:
+                    batch = self._invoke(job, model, w.unit_id, schema,
+                        COMPACT_EXTRACTION_PROMPT if use_compact else EXTRACTION_PROMPT, payload,
+                        timeout_retries=0 if can_split else None)
+                    # Keep the successfully parsed response before any local validation,
+                    # density decision or materialization can fail. This is schema-checked
+                    # candidate data, never a supplier's raw response or credentials.
+                    self.storage.save_unit(job["version"], w.unit_id, "extract", sequence, digest(w.payload(corpus)),
+                        {"format": "compact-v1" if use_compact else "full-v1", "core_chars": w.end - w.start,
+                         "batch": batch.model_dump()}, "extracted")
             except Exception as exc:
                 if not is_model_timeout(exc) and not is_output_limit(exc):
                     raise
@@ -384,12 +406,28 @@ class KnowledgeGraphService:
                     raise
                 split_extract(w, sequence, "graph_extraction_output_split" if is_output_limit(exc) else "graph_extraction_timeout_split", minimum)
                 return
-            limits = (32, 48, 12) if use_compact else (80, 120, 40)
-            sizes = tuple(len(items) for items in (batch.entities, batch.relations, batch.identity_links))
-            if any(size >= limit if use_compact else size > limit for size, limit in zip(sizes, limits)):
-                split_extract(w, sequence, "graph_extraction_capacity_split", minimum)
-                return
-            result = validate_compact_batch(corpus, input_window, batch) if use_compact else validate_batch(corpus, w, batch)
+            try:
+                result = validate_compact_batch(corpus, input_window, batch) if use_compact else validate_batch(corpus, w, batch)
+                counts = core_candidate_counts(result, w)
+                limits = (32, 48, 12) if use_compact else (80, 120, 40)
+                saturated = any(size >= limit if use_compact else size > limit for size, limit in zip(counts.values(), limits))
+                if saturated and can_split:
+                    self._check_stop(job)
+                    split_extract(w, sequence, "graph_extraction_capacity_split", minimum, counts)
+                    return
+                result["diagnostics"] = {"candidate_counts": counts, "core_chars": w.end - w.start,
+                    "capacity_saturated": saturated, "at_minimum_window": not can_split}
+                if saturated:
+                    # A full, valid response at the minimum window is usable. Keep all
+                    # validated candidates, disclose density, and never split below policy.
+                    self.storage.event(job["job_id"], "graph_extraction_capacity_saved", "warning")
+            except BuildStopped:
+                raise
+            except GraphError:
+                raise
+            except Exception as exc:
+                self.storage.event(job["job_id"], f"graph_processing_failure:{w.unit_id}:{type(exc).__name__}", "error")
+                raise GraphError("graph_extraction_processing_failed", "抽取结果处理失败，已缓存成功返回的候选。") from exc
             for entity in result["entities"]:
                 entity["contexts"] = []
                 for mention in entity["mentions"][:2]:
@@ -469,7 +507,13 @@ class KnowledgeGraphService:
                             "graph_structured_output_failed" if "structuredoutput" in error_type else "graph_build_failed")
                         self.storage.update_job(job["job_id"], status="failed", error_code=code)
                         self.storage.event(job["job_id"], code, "error")
-                        LOGGER.warning("Graph job %s failed (%s)", job["job_id"], type(exc).__name__)
+                        frames, seen, failure = [], set(), exc
+                        while failure is not None and id(failure) not in seen:
+                            seen.add(id(failure))
+                            frames.extend(traceback.extract_tb(failure.__traceback__))
+                            failure = failure.__cause__ or failure.__context__
+                        location = " -> ".join(f"{Path(f.filename).name}:{f.lineno}:{f.name}" for f in frames)
+                        LOGGER.warning("Graph job %s failed (%s) at %s", job["job_id"], type(exc).__name__, location)
                     finally:
                         clock = self.running_since
                         if clock:

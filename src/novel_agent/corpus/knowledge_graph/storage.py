@@ -198,10 +198,13 @@ class GraphStorage:
             db.execute("INSERT OR REPLACE INTO graph_units VALUES(?,?,?,?,?,?,?)", (version, unit_id, kind, sequence, input_hash, status, encode(result)))
 
     @retry_busy
-    def split_unit(self, version: str, unit_id: str, children: list[tuple[str, str]], sequence: int, *, min_chars: int = 500):
+    def split_unit(self, version: str, unit_id: str, children: list[tuple[str, str]], sequence: int, *, min_chars: int = 500, candidate_counts: dict | None = None):
         """Persist both halves before requesting either, including across restarts."""
         with self.connect() as db:
-            db.execute("UPDATE graph_units SET status='split',result_json=? WHERE version=? AND unit_id=?", (encode({"split_min_chars": min_chars}), version, unit_id))
+            metadata = {"split_min_chars": min_chars}
+            if candidate_counts is not None:
+                metadata["candidate_counts"] = candidate_counts
+            db.execute("UPDATE graph_units SET status='split',result_json=? WHERE version=? AND unit_id=?", (encode(metadata), version, unit_id))
             for child_id, input_hash in children:
                 db.execute("INSERT OR IGNORE INTO graph_units VALUES(?,?,?,?,?,'pending','{}')", (version, child_id, "extract", sequence, input_hash))
 
