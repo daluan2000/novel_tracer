@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import json
 import re
 import shutil
 import signal
@@ -13,11 +14,15 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
+from urllib.error import URLError
+from urllib.request import ProxyHandler, build_opener
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 FRONTEND_ROOT = PROJECT_ROOT / "frontend"
 DEV_PORTS = (8000, 5173)
+BACKEND_READY_URL = "http://127.0.0.1:8000/api/config"
+BACKEND_STARTUP_TIMEOUT = 120.0
 
 
 @dataclass(frozen=True)
@@ -276,6 +281,42 @@ def _backend_environment() -> dict[str, str]:
     return environment
 
 
+def _backend_is_ready(timeout: float) -> bool:
+    """An HTTP response confirms FastAPI lifespan startup has finished.
+
+    Model credentials may still be unconfigured: `ready=false` is a healthy
+    backend too. Loopback probes must not go through an environment proxy.
+    """
+    try:
+        opener = build_opener(ProxyHandler({}))
+        with opener.open(BACKEND_READY_URL, timeout=timeout) as response:
+            if response.status != 200:
+                return False
+            payload = json.loads(response.read(64 * 1024))
+        return isinstance(payload, dict) and isinstance(payload.get("ready"), bool)
+    except (URLError, OSError, ValueError):
+        return False
+
+
+def _wait_for_backend(
+    process: subprocess.Popen[bytes],
+    timeout: float = BACKEND_STARTUP_TIMEOUT,
+) -> None:
+    deadline = time.monotonic() + timeout
+    while True:
+        exit_code = process.poll()
+        if exit_code is not None:
+            raise RuntimeError(f"后端在就绪前退出（退出码 {exit_code}），请查看上方后端日志。")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError(f"等待后端就绪超时（{timeout:g} 秒），未启动前端。")
+        if _backend_is_ready(timeout=min(1.0, remaining)):
+            if process.poll() is not None:
+                raise RuntimeError("后端在就绪检查期间退出，未启动前端。")
+            return
+        time.sleep(min(0.25, max(0.0, deadline - time.monotonic())))
+
+
 def _usage() -> None:
     print("usage: start_dev.py [--check]")
 
@@ -312,6 +353,7 @@ def main() -> int:
     interrupted = False
 
     try:
+        print("[info] 正在启动后端……", flush=True)
         processes.append(
             subprocess.Popen(
                 [sys.executable, "-m", "novel_agent"],
@@ -320,6 +362,9 @@ def main() -> int:
                 **options,
             )
         )
+        print("[info] 等待后端接口就绪……", flush=True)
+        _wait_for_backend(processes[0])
+        print("[ok] 后端已就绪，正在启动前端……", flush=True)
         processes.append(
             subprocess.Popen(
                 [npm, "run", "dev"],
@@ -337,6 +382,9 @@ def main() -> int:
         interrupted = True
         print("\n[info] 正在停止前后端……", flush=True)
         return 130
+    except (OSError, RuntimeError) as exc:
+        print(f"[error] {exc}", file=sys.stderr, flush=True)
+        return 1
     finally:
         for process in reversed(processes):
             _stop_process_tree(process)
