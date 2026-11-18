@@ -62,10 +62,61 @@ def _content_json(text: str, schema: type[ModelT]) -> ModelT | None:
         decoded = json.loads(candidate)
     except (json.JSONDecodeError, TypeError):
         return None
-    try:
-        return schema.model_validate(decoded)
-    except ValidationError:
-        return None
+    return schema.model_validate(decoded)
+
+
+_VALIDATION_HINTS = {
+    "missing": "补齐必填字段",
+    "extra_forbidden": "删除 Schema 未声明的字段",
+    "literal_error": "只使用工具 Schema 列出的枚举值",
+    "string_type": "使用字符串",
+    "list_type": "使用数组，没有内容用 []",
+    "int_type": "使用整数",
+    "int_parsing": "使用整数",
+    "int_from_float": "使用整数",
+    "greater_than_equal": "遵守 Schema 的最小值",
+    "too_short": "满足 Schema 的最小数量，不能提交空证据",
+    "too_long": "遵守 Schema 的最大数量",
+    "string_too_short": "满足 Schema 的最小字符串长度",
+    "string_too_long": "遵守 Schema 的最大字符串长度",
+}
+
+
+def _validation_issues(error: Any, schema: type[BaseModel]) -> list[dict[str, str]]:
+    """Expose only schema-owned paths and fixed hints, never supplier text/values."""
+    seen = set()
+    while isinstance(error, BaseException) and id(error) not in seen:
+        seen.add(id(error))
+        if isinstance(error, ValidationError):
+            break
+        error = error.__cause__ or error.__context__
+    if not isinstance(error, ValidationError):
+        return []
+    definition = schema.model_json_schema()
+    fields = set(definition.get("properties", {}))
+    for nested in definition.get("$defs", {}).values():
+        fields.update(nested.get("properties", {}))
+    issues = []
+    for item in error.errors(include_input=False, include_context=False, include_url=False)[:8]:
+        path = ".".join(str(part) if isinstance(part, int) or part in fields else "<field>"
+                        for part in item["loc"][:8])
+        kind = item["type"] if item["type"] in _VALIDATION_HINTS else "validation_error"
+        issues.append({"field": path, "type": kind})
+    return issues
+
+
+def _retry_instruction(schema: type[BaseModel], reason: str, issues: list[dict[str, str]]) -> str:
+    instruction = (
+        f"上一次响应未生成有效的 {schema.__name__}（{reason}）。"
+        f"请重新生成完整结果，只调用一次要求的 {schema.__name__} 工具；"
+        "参数必须是符合工具 Schema 的完整 JSON 对象，不要返回普通文本或只返回修正字段。"
+    )
+    if issues:
+        instruction += "\n本次校验失败位置：\n" + "\n".join(
+            f"- {issue['field']}: {_VALIDATION_HINTS.get(issue['type'], '遵守工具 Schema 的字段约束')}"
+            for issue in issues
+        )
+    return instruction
 
 
 def _validate_parsed(value: Any, schema: type[ModelT]) -> ModelT:
@@ -142,15 +193,19 @@ def invoke_structured(
             try:
                 value = _validate_parsed(parsed, schema)
                 return StructuredResult(value=value, retry_count=attempt - 1)
-            except ValidationError:
-                parsing_error = parsing_error or ValidationError
+            except ValidationError as exc:
+                parsing_error = exc
 
         # 某些兼容接口忽略 function_calling，转而在 content 中输出 JSON；这里
         # 作为降级路径接受它，但会发出诊断，便于观察模型行为。
         tool_calls = getattr(raw, "tool_calls", None) or []
         text = _raw_text(raw)
         if not tool_calls and text is not None:
-            fallback = _content_json(text, schema)
+            try:
+                fallback = _content_json(text, schema)
+            except ValidationError as exc:
+                parsing_error = exc
+                fallback = None
             if fallback is not None:
                 _emit(
                     on_diagnostic,
@@ -170,6 +225,7 @@ def invoke_structured(
                 )
 
         last_reason = _failure_reason(raw, parsing_error)
+        issues = _validation_issues(parsing_error, schema)
         if attempt >= max_attempts:
             _emit(
                 on_diagnostic,
@@ -181,6 +237,7 @@ def invoke_structured(
                 retry_number=retries,
                 max_retries=retries,
                 failure_reason=last_reason,
+                validation_issues=issues,
             )
             raise StructuredOutputError(
                 source_node=source_node,
@@ -199,6 +256,7 @@ def invoke_structured(
             retry_number=attempt,
             max_retries=retries,
             failure_reason=last_reason,
+            validation_issues=issues,
         )
         # 指数退避后追加一条纠错消息；base_messages 保持不变，避免重复堆叠
         # 多条失败提示。
@@ -206,10 +264,7 @@ def invoke_structured(
         invocation_messages = [
             *base_messages,
             HumanMessage(
-                content=(
-                    f"上一次响应未生成有效的 {schema.__name__}。"
-                    f"请只调用要求的 {schema.__name__} 工具并提供完整参数，不要返回普通文本。"
-                )
+                content=_retry_instruction(schema, last_reason, issues)
             ),
         ]
 

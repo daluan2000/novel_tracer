@@ -20,6 +20,7 @@ from .extraction import (EXTRACTION_PROMPT, COMPACT_EXTRACTION_PROMPT, validate_
     validate_compact_batch, core_candidate_counts, compact_window, windows, split_window)
 from .models import ExtractionBatch, CompactExtractionBatch, GraphError, GraphOutputLimitError, ResolutionDecision
 from .ontology import PARSER_VERSION, RULE_VERSION, digest, ontology_payload
+from .output_contracts import output_contract
 from .query import GraphReadSession
 from .resolution import RESOLUTION_PROMPT, resolve
 from .storage import GraphStorage, encode, now
@@ -314,9 +315,17 @@ class KnowledgeGraphService:
                         raise GraphOutputLimitError()
                     return response
         runnable = model.with_structured_output(schema, method="function_calling", include_raw=True)
-        return invoke_structured(TrackedRunnable(), [SystemMessage(content=prompt), HumanMessage(content=encode(payload))], schema,
+        def diagnostic(data):
+            self.storage.event(job["job_id"], data["diagnostic_code"], "warning")
+            LOGGER.warning("Graph structured output job=%s unit=%s schema=%s attempt=%s reason=%s fields=%s",
+                job["job_id"], unit_id, schema.__name__, data["attempt"], data["failure_reason"],
+                data.get("validation_issues", []))
+        # Format-only guidance does not invalidate completed semantic checkpoints.
+        contract = output_contract(schema)
+        request_prompt = prompt + "\n\n" + contract if contract else prompt
+        return invoke_structured(TrackedRunnable(), [SystemMessage(content=request_prompt), HumanMessage(content=encode(payload))], schema,
             source_node="graph_" + job["phase"], retries=structured_output_retries(),
-            on_diagnostic=lambda d: self.storage.event(job["job_id"], d["diagnostic_code"], "warning")).value
+            on_diagnostic=diagnostic).value
 
     def _run(self, job):
         started = time.monotonic()

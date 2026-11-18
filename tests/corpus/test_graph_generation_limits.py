@@ -19,6 +19,39 @@ from novel_agent.web.app import create_app
 from test_knowledge_graph import ScriptModel, upload, wait_job
 
 
+@pytest.mark.parametrize("compact", [False, True])
+def test_graph_requests_use_matching_format_contract_and_actionable_retry(tmp_path, monkeypatch, caplog, compact):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("NOVEL_AGENT_STRUCTURED_RETRIES", "1")
+    calls = []
+    class FormatModel:
+        def with_structured_output(self, schema, **kwargs):
+            def invoke(messages):
+                calls.append((schema, messages))
+                if compact and schema is ExtractionBatch:
+                    return {"raw": SimpleNamespace(response_metadata={"finish_reason": "length"}),
+                            "parsed": None, "parsing_error": None}
+                if len([s for s, _ in calls if s is schema]) == 1:
+                    return {"entities": [{"local_id": "e1", "name": "private-source-text", "type": "bad-value"}]}
+                return schema()
+            return SimpleNamespace(invoke=invoke)
+    with TestClient(create_app(data_root=tmp_path, graph_model_factory=FormatModel)) as client:
+        novel = upload(client, "张三拜李四为师。")
+        client.post(f"/api/novels/{novel}/graph/builds", json={"mode": "start"})
+        status = wait_job(client, novel)
+        schema = CompactExtractionBatch if compact else ExtractionBatch
+        relevant = [messages for s, messages in calls if s is schema]
+        assert len(relevant) == 2
+        prompt = relevant[0][0].content
+        assert f"调用 {schema.__name__}" in prompt
+        example = json.loads(next(line for line in prompt.splitlines() if line.startswith('{"entities":')))
+        schema.model_validate(example)
+        assert "entities.0.type" in relevant[1][-1].content
+        assert any(e["code"] == "structured_output_retry" for e in status["job"]["events"])
+        assert "literal_error" in caplog.text and "entities.0.type" in caplog.text
+        assert "private-source-text" not in caplog.text and "bad-value" not in caplog.text
+
+
 @pytest.mark.parametrize("failure", ["timeout", "response_length", "sdk_length"])
 def test_long_window_is_split_without_repeating_unbounded_request(tmp_path, monkeypatch, failure):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")

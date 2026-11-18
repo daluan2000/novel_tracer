@@ -21,6 +21,7 @@ const typeLabels: Record<string, string> = { person: '人物', place: '地点', 
 const phases = { extracting: '抽取实体与关系', resolving: '实体身份消歧', materializing: '保存图谱', publishing: '发布版本' }
 const states = { queued: '等待构建', building: '构建中', stopping: '等待当前请求结束', completed: '已完成', failed: '构建失败', stopped: '已停止' }
 const buildErrors: Record<string, string> = {
+  graph_structured_output_failed: '模型连续返回不符合结构要求的结果，格式重试次数已用尽。已保存完成的批次，点击“继续构建”可重试当前片段。',
   graph_model_timeout: '当前片段的模型请求超时。已完成批次已保存，点击“继续构建”可复用结果，并自动缩小较大的失败片段。',
   graph_model_output_limit: '当前片段的模型输出未完整返回。已保存完成的批次；继续构建会使用片段编号精简抽取，并自动缩小较大的片段。',
   graph_model_authentication_failed: '模型服务鉴权失败，请检查 API Key 后继续构建。',
@@ -32,6 +33,8 @@ const buildErrors: Record<string, string> = {
   graph_checkpoint_invalid: '已缓存的片段与当前原文或数据格式不匹配，请检查图谱数据。',
 }
 const eventLabels: Record<string, string> = {
+  graph_structured_output_failed: '模型结构化结果重试耗尽，构建已停止',
+  structured_output_failed: '模型结果仍未通过结构校验',
   graph_model_timeout_retry: '模型请求超时，正在有限重试',
   graph_extraction_timeout_split: '超时片段已拆为较小片段',
   graph_extraction_output_split: '模型输出达到上限，已自动缩小片段',
