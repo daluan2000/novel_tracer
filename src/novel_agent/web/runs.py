@@ -63,6 +63,7 @@ class RunRecord:
     novel_id: str
     question: str
     max_steps: int
+    graph_reader: Any = field(default=None, repr=False)
     conversation_id: str | None = None
     turn_id: str | None = None
     conversation_history: list[dict[str, str]] = field(default_factory=list)
@@ -125,10 +126,12 @@ class RunManager:
         executor: Executor = execute_agent,
         model_factory: Callable[[], Any] | None = None,
         conversations: ConversationStore | None = None,
+        graph_reader_factory: Callable | None = None,
     ):
         self.executor = executor
         self.model_factory = model_factory
         self.conversations = conversations
+        self.graph_reader_factory = graph_reader_factory
         self._records: dict[str, RunRecord] = {}
         self._active_run_id: str | None = None
         self._lock = threading.Lock()
@@ -160,6 +163,7 @@ class RunManager:
                 novel_id=novel.novel_id,
                 question=question,
                 max_steps=max_steps,
+                graph_reader=self.graph_reader_factory(novel.novel_id) if self.graph_reader_factory else None,
                 conversation_id=conversation_id,
                 conversation_history=history,
             )
@@ -243,6 +247,8 @@ class RunManager:
             kwargs: dict[str, Any] = {}
             if self.model_factory is not None:
                 kwargs["model"] = self.model_factory()
+            if record.graph_reader is not None:
+                kwargs["graph_reader"] = record.graph_reader
             result = self.executor(
                 novel.corpus,
                 record.question,

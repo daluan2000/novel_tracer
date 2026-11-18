@@ -34,6 +34,27 @@ Novel Agent 面向小说及其他长篇文本的深度分析场景，将文档�
 - Embedding 不可用、超时或缓存无效时自动降级到 BM25，不阻断主调查流程。
 - 结构化输出异常可在节点内安全重试；运行失败后可从最近节点恢复，保留既有计划、证据和用量数据。
 
+### 小说知识图谱
+
+- 在“知识图谱”页手动构建人物、地点、组织、物品、功法及专有概念之间的语义关系；构建会将正文分批发送给现有聊天模型，显示进度和用量。
+- 支持实体/别名搜索、最多三跳的邻居与最短关联路径、章节及类型过滤，关系均附带可回读的原文证据。否认陈述与人物说法单独标记，多跳连通只表示调查线索。
+- 图谱使用本地 SQLite，无需额外数据库服务或 Embedding 配置。支持停止、失败/重启后手动继续；全局一个图谱构建任务，其他小说按顺序排队。
+- 重建完成后原子发布，期间旧图谱仍可查；Agent 在每轮开始时固定图谱版本，自动获得实体、关系与路径查询工具，最终引用仍经过原文校验。
+- 图谱保存在 `<NOVEL_AGENT_DATA_DIR>/knowledge_graph`。首版仅支持单后端进程，历史图谱版本保留；同名消歧和关系含义仍受模型质量影响，不提供人工纠错或剧情时点判定。
+- 图谱单次输出默认最多 6144 token，截断或较大抽取片段超时后自动二分；较小片段和实体消歧超时默认额外重试 1 次。图谱超时默认取 180 秒和聊天请求超时的较大值，可独立配置。更改这些运行预算不影响已完成批次，旧超时任务可直接点击“继续构建”；失败请求没有返回用量时仍会如实显示未知，不将其计为零消耗。
+
+设计与接口说明见 [技术设计](docs/novel-knowledge-graph-design.md)，需求边界见 [需求文档](docs/novel-knowledge-graph-requirements.md)，测试和实测性能见 [验证记录](docs/novel-knowledge-graph-validation.md)。
+
+合成数据性能检查（不调用模型）可运行：
+
+```powershell
+python -X utf8 scripts/benchmark_knowledge_graph.py --iterations 100
+```
+
+脚本在 `tmp/graph-benchmark-*` 下生成一万节点、五万条边的测试库与 JSON 报告，包含高连接度、无路径、截断原因和查询延迟。自动化测试使用脚本模型；真实供应商的抽取准确率与消耗需另行评估。
+
+质量评估数据包含 20 个实体归并案例和 30 条关系。运行 `python -X utf8 scripts/evaluate_knowledge_graph.py` 仅检查数据规模，不调用模型；显式添加 `--run-model` 后才会把这些人工编写的测试文本发送给当前模型，生成准确率、召回率、归并结果和逐案例用量报告。
+
 ### 可观测 Web 工作台
 
 - 每本小说支持多个持久化会话和连续追问；后续问题使用最近 10 个成功轮次的问题与最终答案作为上下文。
@@ -163,6 +184,9 @@ MODEL_REQUEST_TIMEOUT_SECONDS=120
 | `MODEL_NAME` | `gpt-4.1-mini` | 聊天模型名称 |
 | `MODEL_THINKING_MODE` | 空（自动） | `enabled` / `disabled`；DeepSeek 默认关闭 |
 | `MODEL_REQUEST_TIMEOUT_SECONDS` | `120` | 单次聊天请求超时，合法范围 5–600 秒 |
+| `NOVEL_AGENT_GRAPH_REQUEST_TIMEOUT_SECONDS` | `max(180, 聊天超时)` | 图谱请求独立超时，合法范围 5–600 秒 |
+| `NOVEL_AGENT_GRAPH_REQUEST_RETRIES` | `1` | 较小抽取片段及消歧请求超时后的额外重试次数，合法范围 0–3 |
+| `NOVEL_AGENT_GRAPH_MAX_OUTPUT_TOKENS` | `6144` | 图谱单次输出上限，合法范围 512–16384，抽取截断后自动缩小片段 |
 | `NOVEL_AGENT_TEMPERATURE` | `0` | 聊天模型温度 |
 | `NOVEL_AGENT_MAX_STEPS` | `16` | Web 页面默认调查步数；接口最终限制为 1–100 |
 | `NOVEL_AGENT_STRUCTURED_RETRIES` | `2` | 结构化输出额外重试次数，合法范围 0–5 |

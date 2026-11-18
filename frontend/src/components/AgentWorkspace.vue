@@ -327,6 +327,7 @@ async function toggleEvidence(evidence: Evidence) {
                     <span>证据 {{ turnSnapshot(turn)?.evidence.length ?? 0 }} 条</span>
                     <span>模型调用 {{ turnSnapshot(turn)?.metrics.model_call_count ?? 0 }} 次</span>
                     <span>调查步数 {{ turnSnapshot(turn)?.step_count ?? 0 }}</span>
+                    <span v-if="turnSnapshot(turn)?.graph_version">图谱 {{ turnSnapshot(turn)?.graph_version?.slice(0, 8) }}</span>
                   </div>
                   <div v-if="turnSnapshot(turn)?.plan.length" class="history-plan">
                     <div v-for="task in turnSnapshot(turn)?.plan" :key="task.task_id"><code>{{ task.task_id }}</code><span>{{ task.description }}</span><small>{{ taskStatusNames[task.status] }}</small></div>
@@ -373,6 +374,7 @@ async function toggleEvidence(evidence: Evidence) {
     </div>
     <div v-if="currentTurn || view.status !== 'idle'" class="run-header">
       <div><p class="eyebrow">实时分析</p><h2>调查进展</h2></div>
+      <small v-if="view.snapshot?.graph_version">本轮图谱 {{ view.snapshot.graph_version.slice(0, 8) }}</small>
       <div class="run-status" :class="`status-${view.status}`"><span></span>{{ view.status }} · {{ statusNames[view.status] }}</div>
     </div>
     <div v-if="currentTurn || view.status !== 'idle'" class="progress-track" role="progressbar" :aria-valuenow="progress" aria-valuemin="0" aria-valuemax="100"><span :style="{ width: `${progress}%` }"></span></div>

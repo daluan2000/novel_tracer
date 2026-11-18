@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref } from 'vue'
 import { api } from './api'
 import type { ConfigStatus, NovelInfo, RetrievalStatus } from './types'
 import AgentWorkspace from './components/AgentWorkspace.vue'
 import SearchPanel from './components/SearchPanel.vue'
 import StructurePanel from './components/StructurePanel.vue'
+const KnowledgeGraphPanel = defineAsyncComponent(() => import('./components/KnowledgeGraphPanel.vue'))
 
-type TabId = 'agent' | 'structure' | 'search'
+type TabId = 'agent' | 'structure' | 'search' | 'graph'
 const SELECTED_NOVEL_KEY = 'novel-agent:selected-novel'
 
 const config = ref<ConfigStatus | null>(null)
@@ -27,6 +28,7 @@ const tabs: Array<{ id: TabId; label: string; index: string }> = [
   { id: 'agent', label: '智能分析', index: '01' },
   { id: 'structure', label: '结构概览', index: '02' },
   { id: 'search', label: '文本检索', index: '03' },
+  { id: 'graph', label: '知识图谱', index: '04' },
 ]
 
 onMounted(async () => {
@@ -145,7 +147,7 @@ onBeforeUnmount(() => { if (retrievalTimer) clearTimeout(retrievalTimer) })
       <a class="brand" href="#" aria-label="Novel Lens 首页"><span class="brand-mark">NL</span><span><strong>Novel Lens</strong><small>证据型小说解读工作台</small></span></a>
       <div class="topbar-status">
         <span class="model-badge" :class="{ ready: config?.ready }"><i></i>{{ config?.ready ? config.model_name : '模型未就绪' }}</span>
-        <span class="privacy-note">本机运行 · 文件不离开设备</span>
+        <span class="privacy-note">本地存储 · 按需调用模型</span>
       </div>
     </header>
 
@@ -192,6 +194,7 @@ onBeforeUnmount(() => { if (retrievalTimer) clearTimeout(retrievalTimer) })
           <AgentWorkspace v-show="activeTab === 'agent'" :novel="novel" :config="config" :retrieval-revision="retrievalRevision" @running-change="runActive = $event" />
           <StructurePanel v-show="activeTab === 'structure'" :novel="novel" />
           <SearchPanel v-show="activeTab === 'search'" :novel="novel" :retrieval-revision="retrievalRevision" />
+          <KnowledgeGraphPanel v-if="activeTab === 'graph'" :key="novel.novel_id" :novel="novel" />
         </template>
         <div v-else class="onboarding"><span>01</span><h2>先导入一部小说</h2><p>导入后即可查看章节结构、检索原文，并开展基于证据的智能分析。</p></div>
       </section>

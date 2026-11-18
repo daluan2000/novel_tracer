@@ -85,12 +85,19 @@ class ModelConfig:
             ),
         )
 
-    def create_model(self) -> ChatOpenAI:
+    def create_model(self, *, max_retries: int | None = None, max_tokens: int | None = None) -> ChatOpenAI:
         extra_body = _thinking_extra_body(
             self.model_name,
             self.base_url,
             self.thinking_mode,
         )
+        token_params = {"max_tokens": max_tokens} if max_tokens is not None else {}
+        if max_tokens is not None and _uses_enable_thinking(self.model_name, self.base_url):
+            # ChatOpenAI renames max_tokens to max_completion_tokens. Qwen-compatible
+            # gateways commonly implement max_tokens; extra_body is merged by the SDK
+            # without that renaming. Send one budget field, never both.
+            extra_body = {**(extra_body or {}), "max_tokens": max_tokens}
+            token_params = {}
         return ChatOpenAI(
             api_key=self.api_key,
             base_url=self.base_url,
@@ -98,6 +105,8 @@ class ModelConfig:
             temperature=self.temperature,
             extra_body=extra_body,
             timeout=self.request_timeout_seconds,
+            **({"max_retries": max_retries} if max_retries is not None else {}),
+            **token_params,
         )
 
 
@@ -168,4 +177,31 @@ def structured_output_retries() -> int:
         raise RuntimeError("NOVEL_AGENT_STRUCTURED_RETRIES 必须是 0 到 5 之间的整数。") from exc
     if not 0 <= value <= 5:
         raise RuntimeError("NOVEL_AGENT_STRUCTURED_RETRIES 必须是 0 到 5 之间的整数。")
+    return value
+
+
+def graph_request_timeout_seconds(chat_timeout: float = 120.0) -> float:
+    """Graph extraction may generate much larger responses than an Agent step."""
+    return _timeout_from_env("NOVEL_AGENT_GRAPH_REQUEST_TIMEOUT_SECONDS", max(180.0, chat_timeout))
+
+
+def graph_request_retries() -> int:
+    raw = os.getenv("NOVEL_AGENT_GRAPH_REQUEST_RETRIES", "1").strip()
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise RuntimeError("NOVEL_AGENT_GRAPH_REQUEST_RETRIES 必须是 0 到 3 之间的整数。") from exc
+    if not 0 <= value <= 3:
+        raise RuntimeError("NOVEL_AGENT_GRAPH_REQUEST_RETRIES 必须是 0 到 3 之间的整数。")
+    return value
+
+
+def graph_max_output_tokens() -> int:
+    raw = os.getenv("NOVEL_AGENT_GRAPH_MAX_OUTPUT_TOKENS", "6144").strip()
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise RuntimeError("NOVEL_AGENT_GRAPH_MAX_OUTPUT_TOKENS 必须是 512 到 16384 之间的整数。") from exc
+    if not 512 <= value <= 16384:
+        raise RuntimeError("NOVEL_AGENT_GRAPH_MAX_OUTPUT_TOKENS 必须是 512 到 16384 之间的整数。")
     return value

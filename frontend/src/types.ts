@@ -158,6 +158,7 @@ export interface RunMetrics {
 }
 
 export interface RunSnapshot {
+  graph_version?: string | null
   plan: PlanTask[]
   current_task_id: string | null
   evidence: Evidence[]
@@ -188,6 +189,7 @@ export interface RunEvent {
     task_count?: number
     tool_calls?: Array<{ name: string; args: Record<string, unknown> }>
     tools?: string[]
+    graph_queries?: Array<{ tool: string; graph_version: string; truncated: boolean; node_count: number; edge_count: number }>
     evidence_count?: number
     sufficient?: boolean
     rationale?: string

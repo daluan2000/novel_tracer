@@ -294,6 +294,8 @@ class AgentNodes:
                 "ok": not (isinstance(parsed_result, dict) and "error" in parsed_result),
                 "result_size_chars": len(content),
                 "rejected_evidence_ids": rejected_quotes,
+                "graph_version": parsed_result.get("graph_version") if isinstance(parsed_result, dict) else None,
+                "truncated": parsed_result.get("truncated", False) if isinstance(parsed_result, dict) else False,
             })
 
         unresolved = _bounded_unique(

@@ -34,7 +34,7 @@ def _chunk_payload(chunk: object) -> dict[str, object]:
 
 # corpus：当前 Agent 要查询的小说语料库。
 # 返回值：注册给模型和 ToolNode 的工具列表。
-def build_tools(corpus: NovelCorpus) -> list[StructuredTool]:
+def build_tools(corpus: NovelCorpus, graph_reader=None) -> list[StructuredTool]:
     """构造 Researcher 可调用的四个只读工具。
 
     corpus 被闭包捕获，不会暴露给模型；返回值会注册给模型和 ToolNode。
@@ -110,9 +110,13 @@ def build_tools(corpus: NovelCorpus) -> list[StructuredTool]:
         )
 
     # 包装成 Tool；注册发生在 agent.graph 的 bind_tools 和 ToolNode。
-    return [
+    tools = [
         StructuredTool.from_function(get_book_structure),
         StructuredTool.from_function(search_novel),
         StructuredTool.from_function(read_context),
         StructuredTool.from_function(read_section),
     ]
+    if graph_reader is not None:
+        from novel_agent.agent.graph_tools import build_graph_tools
+        tools.extend(build_graph_tools(graph_reader))
+    return tools
