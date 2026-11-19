@@ -24,7 +24,7 @@ RELATIONS = {
     "uses": (ACTORS, {"item", "skill"}, "使用"),
     "part_of": ({"place", "organization", "item"}, {"place", "organization", "item"}, "属于整体"),
 }
-RULE_VERSION = "2"
+RULE_VERSION = "3"
 PARSER_VERSION = "1"
 
 

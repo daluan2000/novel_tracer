@@ -297,23 +297,68 @@ def test_types_are_filtered_before_path_traversal(indexed_graph):
     assert {n["id"] for n in result["nodes"]} == {"a", "d"}
 
 
-def test_resolution_does_not_merge_homonyms_without_a_decision():
+def test_resolution_keeps_homonyms_separate_with_distinguishing_evidence():
     def batch(unit, position):
+        mention = {"start_char": position, "end_char": position + 2, "quote": "张三", "section_id": unit, "section_order": position}
         return {"unit_id": unit, "entities": [{"local_id": "a", "name": "张三", "type": "person", "description": "",
-            "mentions": [{"start_char": position, "end_char": position + 2, "quote": "张三", "section_id": unit, "section_order": position}]}],
+            "mentions": [mention], "contexts": [{**mention, "quote": "城东的木匠叫张三。" if position == 0 else "城西还有另一个张三，是医生，与木匠不是同一人。"}]}],
             "identity_links": [], "relations": []}
     saved = {}
     def checkpoint(uid, fingerprint, result=None, sequence=0):
         if result is not None:
             saved[uid] = result
         return saved.get(uid)
+    def distinguish(uid, schema, prompt, payload):
+        return ResolutionDecision(decision="new", supporting_mentions=[payload["entity"]["excerpts"][0]["mention_id"]])
     entities, _ = resolve([batch("s1", 0), batch("s2", 100)], "v",
-        lambda *_: ResolutionDecision(decision="ambiguous"), checkpoint, lambda *_: None)
+        distinguish, checkpoint, lambda *_: None)
     assert len(entities) == 2
     # Replaying completed decisions must not call the model.
     replay, _ = resolve([batch("s1", 0), batch("s2", 100)], "v",
         lambda *_: pytest.fail("checkpoint replay called model"), checkpoint, lambda *_: None)
     assert [e["id"] for e in replay] == [e["id"] for e in entities]
+
+
+@pytest.mark.parametrize("decision", ["ambiguous", "new", "invalid_merge", "invalid_new"])
+def test_same_name_uncertainty_reuses_existing_entity_and_all_relations(decision):
+    def batch(index, name="祥子"):
+        position = index * 1000
+        mention = {"start_char": position, "end_char": position + len(name), "quote": name, "section_id": str(index)}
+        context = {**mention, "quote": ["《骆驼祥子》TXT全集", "祥子给夏先生拉车。", "夏太太叫祥子去买栗子。", "祥子又碰见了小福子。"][index]}
+        entity = {"local_id": "x", "name": name, "type": "person", "description": "", "mentions": [mention], "contexts": [context]}
+        other = {"local_id": "o", "name": "夏先生", "type": "person", "description": "",
+                 "mentions": [{**mention, "start_char": position + 20, "end_char": position + 23, "quote": "夏先生"}]}
+        return {"unit_id": str(index), "entities": [entity, other], "identity_links": [],
+                "relations": [{"source": "x", "target": "o", "type": "knows", "polarity": "affirmed",
+                               "statement_mode": "narration", "evidence": [context]}]}
+    payloads = []
+    def invoke(uid, schema, prompt, payload):
+        payloads.append(payload)
+        if decision == "invalid_merge":
+            return ResolutionDecision(decision="merge", candidate_id="invented", supporting_mentions=["invented"])
+        if decision == "invalid_new":
+            return ResolutionDecision(decision="new", supporting_mentions=["invented"])
+        return ResolutionDecision(decision=decision)
+    saved, events = {}, []
+    def checkpoint(uid, fingerprint, result=None, sequence=0):
+        if result is not None:
+            saved[uid] = (fingerprint, result)
+            return
+        if uid in saved:
+            assert saved[uid][0] == fingerprint
+            return saved[uid][1]
+    entities, relations = resolve([batch(i) for i in range(4)], "v", invoke, checkpoint, events.append)
+    assert len(entities) == 2
+    xiangzi = next(e for e in entities if e["name"] == "祥子")
+    assert len(xiangzi["mentions"]) == 4
+    assert len(relations) == 1 and len(relations[0]["groups"]) == 4
+    # The latest narrative context must accompany the title, rather than only
+    # repeating the first two excerpts throughout the entire novel.
+    last = [p for p in payloads if p["entity"]["name"] == "祥子"][-1]
+    assert "夏太太叫祥子去买栗子。" in [m["quote"] for m in last["candidates"][0]["excerpts"]]
+    assert "entity_same_name_reused" in events
+    replay = resolve([batch(i) for i in range(4)], "v", lambda *_: pytest.fail("checkpoint called model"), checkpoint, lambda *_: None)
+    assert replay == (entities, relations)
 
 
 @pytest.mark.parametrize("reverse_links", [False, True])

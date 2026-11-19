@@ -33,6 +33,7 @@ const buildErrors: Record<string, string> = {
   graph_checkpoint_invalid: '已缓存的片段与当前原文或数据格式不匹配，请检查图谱数据。',
 }
 const eventLabels: Record<string, string> = {
+  entity_same_name_reused: '同名唯一候选缺少异人依据，已复用现有实体',
   graph_structured_output_failed: '模型结构化结果重试耗尽，构建已停止',
   structured_output_failed: '模型结果仍未通过结构校验',
   graph_model_timeout_retry: '模型请求超时，正在有限重试',

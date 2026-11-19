@@ -38,6 +38,7 @@ def output_contract(schema: type) -> str:
     if schema is ResolutionDecision:
         return """只调用一次 ResolutionDecision 工具，参数为一个完整 JSON 对象，不添加其他字段或解释。
 decision 只能为 merge/new/ambiguous。merge 时 candidate_id 引用输入候选编号，
-supporting_mentions 为输入 mention_id 的非空字符串数组；new/ambiguous 使用 candidate_id=null、supporting_mentions=[]。
+supporting_mentions 为输入 mention_id 的非空字符串数组；new/ambiguous 使用 candidate_id=null。
+有候选时 new 的 supporting_mentions 必须引用区分同名异人的原文证据；无候选的 new 和 ambiguous 使用 supporting_mentions=[]。
 没有充分身份依据时参数示例：{"decision":"ambiguous","candidate_id":null,"supporting_mentions":[]}。"""
     return ""
