@@ -203,7 +203,7 @@ onBeforeUnmount(() => { disposed = true; chapterSequence++; evidenceSequence++; 
       <p class="graph-notice">范围：{{ start ? chapters.find(c => c.chapter_id === start)?.title || '指定起点' : '全书开头' }} — {{ end ? chapters.find(c => c.chapter_id === end)?.title || '指定终点' : '全书末尾' }}。章节证据不等于剧情时点；多跳连通不自动产生新事实。</p>
       <template v-if="result">
         <p v-if="result.truncated" class="graph-warning" role="status">结果已截断或检索未完成（{{ result.truncation_reason }}），请缩小范围。</p>
-        <KnowledgeGraphCanvas v-if="result.edges.length" :result="result" :reset-key="`${root?.id}:${mode}`" :labels="labels" :symmetric="symmetric" @node="chooseNode" @edge="id => { const edge = result?.edges.find(e => e.id === id); if (edge) selectEdge(edge) }" />
+        <KnowledgeGraphCanvas v-if="result.edges.length" :result="result" :reset-key="`${root?.id}:${mode}`" :root-id="root?.id" :selected-edge-id="selectedEdge?.id" :labels="labels" :symmetric="symmetric" @node="chooseNode" @edge="id => { const edge = result?.edges.find(e => e.id === id); if (edge) selectEdge(edge) }" />
         <p v-if="!result.edges.length" class="graph-notice">{{ mode === 'paths' && result.paths.length ? '起点与终点是同一实体：零跳路径。' : result.search_complete ? '在当前图谱、范围及跳数内未找到关系。' : '本次预算内未找到关系，检索尚未完成。' }}</p>
         <ol v-if="result.paths.length" class="graph-paths"><li v-for="(path, i) in result.paths" :key="i">{{ path.node_ids.map(name).join(' — ') }}</li></ol>
         <div class="graph-results">
