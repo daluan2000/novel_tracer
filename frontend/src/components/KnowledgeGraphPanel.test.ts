@@ -27,6 +27,33 @@ beforeEach(() => {
 })
 
 describe('KnowledgeGraphPanel', () => {
+  it('shows all aliases in search candidates and selected entities for both path endpoints', async () => {
+    const monkey: GraphNode = { id: 'monkey', name: '孙悟空', type: 'person', aliases: ['悟空', '孙大圣', '齐天大圣'] }
+    vi.mocked(graphApi.search).mockResolvedValue({ ...result, items: [monkey], offset: 0, limit: 20, total: 1 })
+    vi.mocked(graphApi.paths).mockResolvedValue({ ...result, nodes: [monkey], edges: [], paths: [] })
+    const wrapper = mount(KnowledgeGraphPanel, { props: { novel }, global: { stubs: { KnowledgeGraphCanvas: true } } })
+    await flushPromises()
+    await wrapper.find('.graph-entity-search input').setValue('齐天大圣')
+    await wrapper.findAll('select')[1]!.setValue('person')
+    await flushPromises()
+    expect(wrapper.find('.graph-candidates').text()).toContain('孙悟空')
+    expect(wrapper.find('.graph-candidates').text()).toContain('其他名称：悟空、孙大圣、齐天大圣')
+    await wrapper.find('.graph-candidates button').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.graph-entity-search').text()).toContain('已选：孙悟空')
+    expect(wrapper.find('.graph-entity-search').text()).toContain('其他名称：悟空、孙大圣、齐天大圣')
+    await wrapper.findAll('select')[0]!.setValue('paths')
+    await wrapper.findAll('.graph-entity-search input')[1]!.setValue('孙大圣')
+    await wrapper.findAll('select')[3]!.setValue(2)
+    await flushPromises()
+    const target = wrapper.findAll('.graph-entity-search')[1]!
+    expect(target.find('.graph-candidates').text()).toContain('其他名称：悟空、孙大圣、齐天大圣')
+    await target.find('.graph-candidates button').trigger('click')
+    await flushPromises()
+    expect(target.text()).toContain('已选：孙悟空')
+    expect(target.text()).toContain('其他名称：悟空、孙大圣、齐天大圣')
+    wrapper.unmount()
+  })
   it('shows cached candidates and local processing diagnostics without blaming model configuration', async () => {
     vi.mocked(graphApi.status).mockResolvedValue({ ...status, job: {
       job_id: 'j', graph_version: 'v1', status: 'failed', phase: 'extracting', stop_requested: false,

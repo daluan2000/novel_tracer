@@ -70,7 +70,7 @@ def event_detail(
             if isinstance(data, dict) and data.get("graph_version"):
                 summaries.append({"tool": getattr(message, "name", None),
                     "graph_version": data["graph_version"], "truncated": data.get("truncated", False),
-                    "node_count": len(data.get("nodes", data.get("items", []))),
+                    "node_count": 1 if data.get("entity") else len(data.get("nodes", data.get("items", []))),
                     "edge_count": len(data.get("edges", []))})
         if summaries:
             detail["graph_queries"] = summaries[:2]

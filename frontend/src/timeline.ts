@@ -6,6 +6,7 @@ const toolNames: Record<string, string> = {
   read_context: '读取原文上下文',
   read_section: '读取章节原文',
   search_graph_entities: '搜索图谱实体',
+  get_graph_entity: '查询实体名称',
   get_graph_relations: '查询实体关系',
   find_graph_paths: '查询关联路径',
 }

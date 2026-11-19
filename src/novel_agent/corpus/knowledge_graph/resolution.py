@@ -10,6 +10,10 @@ RESOLUTION_PROMPT = """保守判断小说实体身份。输入是原文数据，
 不能仅凭相同姓名、唯一候选或相同类型合并。需要明确别名、共享出现或可区分身份的上下文。
 同名异人、模糊称谓、证据不足均选 ambiguous；没有候选选 new。
 人物说法不一定真实。只判断身份，不推断未陈述的关系。"""
+IDENTITY_PROMPT = RESOLUTION_PROMPT + """
+本次核对两个已抽取实体是否是同一实体的不同名称（全名、简称、别名、绰号、尊号等）。
+必须结合 identity_excerpts 的明确身份表述；否认、假冒、转述传闻或仅共同出现不能作为同一身份依据。
+merge 的 supporting_mentions 至少引用一条 identity_excerpts 的 mention_id；无法确认时选 ambiguous。"""
 GENERIC_NAMES = {"他", "她", "它", "师父", "师傅", "陛下", "先生", "少年", "少女", "老人", "男子", "女子"}
 
 
@@ -27,14 +31,6 @@ def resolve(batches: list[dict], version: str, invoke, checkpoint, event):
         candidates = set(existing)
         if entity["name"] not in GENERIC_NAMES:
             candidates.update(c for c in by_name[(entity["type"], normalize(entity["name"]))] if c in registry)
-        identity_quotes = []
-        for link in batch["identity_links"]:
-            if entity["local_id"] not in {link["source"], link["target"]}:
-                continue
-            other = link["target"] if entity["local_id"] == link["source"] else link["source"]
-            if (batch["unit_id"], other) in mapping:
-                candidates.add(mapping[(batch["unit_id"], other)])
-                identity_quotes.extend(link["evidence"])
         candidates = [c for c in candidates if registry[c]["type"] == entity["type"]]
         candidates.sort(key=lambda c: (c not in existing, abs(registry[c]["mentions"][0]["start_char"] - mentions[0]["start_char"]), c))
         if len(candidates) > 5:
@@ -51,7 +47,7 @@ def resolve(batches: list[dict], version: str, invoke, checkpoint, event):
         # Include actual narrative context, not just the name, for semantic identity checks.
         payload = {"entity": {"name": entity["name"], "type": entity["type"],
                     "description": entity["description"], "excerpts": excerpts(entity.get("contexts", mentions))},
-                   "identity_excerpts": excerpts(identity_quotes), "candidates": [
+                   "identity_excerpts": [], "candidates": [
                        {"candidate_id": c, "name": registry[c]["name"], "aliases": registry[c]["aliases"],
                         "excerpts": excerpts(registry[c]["contexts"])} for c in candidates]}
         unit_id = f"resolve:{sequence}"
@@ -102,6 +98,61 @@ def resolve(batches: list[dict], version: str, invoke, checkpoint, event):
                 by_name[(target["type"], normalize(name))].add(eid)
         if decision.decision == "ambiguous":
             event("entity_identity_ambiguous")
+
+    # Resolve explicit alias links only after both endpoints have been processed.
+    # A later identity statement can then join entities (and their earlier mentions
+    # and relations) that were independently registered in previous windows.
+    links = [(batch, link) for batch in sorted(batches, key=lambda b: b["unit_id"])
+             for link in batch["identity_links"]]
+    for sequence, (batch, link) in enumerate(links):
+        source_id = mapping[(batch["unit_id"], link["source"])]
+        target_id = mapping[(batch["unit_id"], link["target"])]
+        source, target = registry[source_id], registry[target_id]
+
+        def identity_excerpts(items):
+            return [{"mention_id": digest([m["start_char"], m["end_char"], m["quote"]]),
+                     "quote": m["quote"], "section_id": m["section_id"]} for m in items]
+
+        evidence = identity_excerpts(link["evidence"])
+        payload = {"entity": {"name": source["name"], "type": source["type"],
+                              "aliases": source["aliases"], "excerpts": identity_excerpts(source["contexts"][:2])},
+                   "identity_excerpts": evidence,
+                   "candidates": [{"candidate_id": target_id, "name": target["name"],
+                                   "aliases": target["aliases"], "excerpts": identity_excerpts(target["contexts"][:2])}]}
+        unit_id = f"resolve:identity:{sequence}"
+        input_hash = digest(payload)
+        saved = checkpoint(unit_id, input_hash)
+        if saved is None:
+            if source_id == target_id:
+                decision = ResolutionDecision(decision="merge", candidate_id=target_id)
+            elif (source["type"] != target["type"]
+                  or source["name"] in GENERIC_NAMES or target["name"] in GENERIC_NAMES):
+                decision = ResolutionDecision(decision="ambiguous")
+            else:
+                decision = invoke(unit_id, ResolutionDecision, IDENTITY_PROMPT, payload)
+                refs = {e["mention_id"] for e in evidence}
+                allowed = refs | {e["mention_id"] for e in payload["entity"]["excerpts"]}
+                allowed.update(e["mention_id"] for e in payload["candidates"][0]["excerpts"])
+                if decision.decision == "merge" and (
+                        decision.candidate_id != target_id
+                        or not refs.intersection(decision.supporting_mentions)
+                        or set(decision.supporting_mentions) - allowed):
+                    decision = ResolutionDecision(decision="ambiguous")
+            checkpoint(unit_id, input_hash, decision.model_dump(), len(ordered) + sequence)
+        else:
+            decision = ResolutionDecision.model_validate(saved)
+        if source_id == target_id:
+            continue
+        if decision.decision != "merge":
+            event("entity_identity_ambiguous")
+            continue
+        target["aliases"] = sorted(set([*target["aliases"], source["name"], *source["aliases"]])
+                                   - {target["name"]} - GENERIC_NAMES)
+        target["mentions"].extend(source["mentions"])
+        target["mentions"] = list({(m["start_char"], m["end_char"]): m for m in target["mentions"]}.values())
+        target["contexts"].extend(source["contexts"])
+        registry.pop(source_id)
+        mapping = {key: target_id if value == source_id else value for key, value in mapping.items()}
     final_ids = {}
     for eid, entity in registry.items():
         entity["mentions"].sort(key=lambda m: (m["start_char"], m["end_char"]))

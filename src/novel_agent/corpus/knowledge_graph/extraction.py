@@ -21,6 +21,8 @@ sibling_of/spouse_of/friend_of/knows/cooperates_with/hostile_to 为对称关系�
 否认用 polarity=denied，肯定用 affirmed；人物说法用 statement_mode=character_claim，
 叙述用 narration。推测、疑问、假设、愿望不入库。不同陈述分别保留，不判断最终真相。
 identity_links 只记录有明确同一身份或别名表述的两个实体；不能因同名或称谓相同而合并。
+同一实体的全名、简称、别名、绰号、尊号分别作为实体名称抽取，并用 identity_links 连接；
+只记录原文实际出现且能定位的名称，不凭常识补全；否认同一身份或假冒称号不建立身份线索。
 只抽取涉及 core 范围的内容，上下文用于理解。没有内容时返回空数组。
 每批最多80实体、120关系、40身份线索。"""
 
@@ -38,6 +40,8 @@ uses：使用者到物品或功法；part_of：部分到整体。
 sibling_of/spouse_of/friend_of/knows/cooperates_with/hostile_to 为对称关系。
 不以共同出现推断认识或朋友。否认用 denied，肯定用 affirmed；人物说法用 character_claim，叙述用 narration。
 推测、假设、疑问、愿望不入库。identity_links 只记录明确同一身份或别名并引用证据片段。
+全名、简称、别名、绰号、尊号分别列为实体，用 identity_links 连接有明确同一身份依据的名称。
+不凭常识补充未出现的名称；否认同一身份、假冒称号不建立身份线索。
 只抽取涉及 core 的内容。最多32个实体、48条关系、12条身份线索；信息少时返回短结果，
 没有内容就返回空数组。切勿为填满数组而重复生成实体、关系或原文。"""
 

@@ -22,7 +22,7 @@ from .models import ExtractionBatch, CompactExtractionBatch, GraphError, GraphOu
 from .ontology import PARSER_VERSION, RULE_VERSION, digest, ontology_payload
 from .output_contracts import output_contract
 from .query import GraphReadSession
-from .resolution import RESOLUTION_PROMPT, resolve
+from .resolution import IDENTITY_PROMPT, RESOLUTION_PROMPT, resolve
 from .storage import GraphStorage, encode, now
 
 LOGGER = logging.getLogger(__name__)
@@ -125,7 +125,7 @@ class KnowledgeGraphService:
     def _fingerprint(self, item, config):
         return digest({"source": source_identity(item), "model": model_identity(config),
                        "rules": RULE_VERSION, "core_chars": 2500, "context_chars": 300,
-                       "prompts": digest([EXTRACTION_PROMPT, RESOLUTION_PROMPT]), "ontology": ontology_payload(),
+                       "prompts": digest([EXTRACTION_PROMPT, COMPACT_EXTRACTION_PROMPT, RESOLUTION_PROMPT, IDENTITY_PROMPT]), "ontology": ontology_payload(),
                        "schemas": digest([ExtractionBatch.model_json_schema(), ResolutionDecision.model_json_schema()])})
 
     def status(self, novel_id):
@@ -461,6 +461,10 @@ class KnowledgeGraphService:
             uid = f"resolve:{sequence}"
             if not self.storage.unit(job["version"], uid):
                 self.storage.save_unit(job["version"], uid, "resolve", sequence, "", {}, "pending")
+        for sequence in range(sum(len(b["identity_links"]) for b in batches)):
+            uid = f"resolve:identity:{sequence}"
+            if not self.storage.unit(job["version"], uid):
+                self.storage.save_unit(job["version"], uid, "resolve", total + sequence, "", {}, "pending")
         def checkpoint(unit_id, input_hash, result=None, sequence=0):
             if result is not None:
                 self.storage.save_unit(job["version"], unit_id, "resolve", sequence, input_hash, result)

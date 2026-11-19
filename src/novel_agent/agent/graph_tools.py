@@ -40,9 +40,13 @@ def build_graph_tools(reader):
 
     def search_graph_entities(query: str, entity_type: str | None = None, top_k: int = 5,
                               start_section_id: str | None = None, end_section_id: str | None = None) -> str:
-        """按名称或别名查图谱实体，重名需结合出现位置消歧；最多8条。"""
+        """按名称或别名查图谱实体，返回主名称及 aliases 全部别名；重名需结合出现位置消歧，最多8条。"""
         return run(lambda: reader.search(query, entity_type, limit=min(max(top_k, 1), 8),
             start_section_id=start_section_id, end_section_id=end_section_id))
+
+    def get_graph_entity(entity_id: str) -> str:
+        """查询已选实体的主名称、aliases 全部别名及前8处原文提及。"""
+        return run(lambda: reader.entity(entity_id, limit=8))
 
     def get_graph_relations(entity_id: str, depth: int = 1, entity_types: list[str] | None = None,
                              relation_types: list[str] | None = None,
@@ -58,4 +62,4 @@ def build_graph_tools(reader):
         return run(lambda: reader.paths(from_id, to_id, min(max(max_hops, 1), 3), 3,
             entity_types or [], relation_types or [], start_section_id, end_section_id))
 
-    return [StructuredTool.from_function(fn) for fn in (search_graph_entities, get_graph_relations, find_graph_paths)]
+    return [StructuredTool.from_function(fn) for fn in (search_graph_entities, get_graph_entity, get_graph_relations, find_graph_paths)]

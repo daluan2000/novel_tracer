@@ -191,11 +191,13 @@ onBeforeUnmount(() => { disposed = true; chapterSequence++; evidenceSequence++; 
         <label class="field"><span>结束章节</span><select v-model="end"><option value="">全书末尾</option><option v-for="(chapter, i) in chapters" :key="chapter.chapter_id" :value="chapter.chapter_id">{{ i + 1 }} · {{ chapter.title || '无标题区段' }}</option></select></label>
         <div class="graph-entity-search"><label class="field"><span>搜索实体或别名</span><input v-model="queryText" placeholder="输入人物、地点、组织…" /></label>
           <div v-if="root" class="tags"><span>已选：{{ root.name }} · {{ typeLabels[root.type] }}</span></div>
-          <ul v-if="candidates.length" class="graph-candidates"><li v-for="node in candidates" :key="node.id"><button type="button" @click="choose(node)">{{ node.name }} · {{ typeLabels[node.type] }} · {{ node.first_mention?.section_title || node.first_mention?.section_id }} Ln {{ node.first_mention?.start_line }}</button></li></ul>
+          <p v-if="root" class="graph-notice">其他名称：{{ root.aliases.length ? root.aliases.join('、') : '暂无已收录别名' }}</p>
+          <ul v-if="candidates.length" class="graph-candidates"><li v-for="node in candidates" :key="node.id"><button type="button" @click="choose(node)">{{ node.name }} · {{ typeLabels[node.type] }} · {{ node.first_mention?.section_title || node.first_mention?.section_id }} Ln {{ node.first_mention?.start_line }}<small v-if="node.aliases.length">其他名称：{{ node.aliases.join('、') }}</small></button></li></ul>
         </div>
         <div v-if="mode === 'paths'" class="graph-entity-search"><label class="field"><span>目标实体</span><input v-model="targetText" placeholder="输入另一个实体名称" /></label>
           <div v-if="target" class="tags"><span>已选：{{ target.name }}</span></div>
-          <ul v-if="targetCandidates.length" class="graph-candidates"><li v-for="node in targetCandidates" :key="node.id"><button type="button" @click="choose(node, 1)">{{ node.name }} · {{ typeLabels[node.type] }} · {{ node.first_mention?.section_title || node.first_mention?.section_id }} Ln {{ node.first_mention?.start_line }}</button></li></ul>
+          <p v-if="target" class="graph-notice">其他名称：{{ target.aliases.length ? target.aliases.join('、') : '暂无已收录别名' }}</p>
+          <ul v-if="targetCandidates.length" class="graph-candidates"><li v-for="node in targetCandidates" :key="node.id"><button type="button" @click="choose(node, 1)">{{ node.name }} · {{ typeLabels[node.type] }} · {{ node.first_mention?.section_title || node.first_mention?.section_id }} Ln {{ node.first_mention?.start_line }}<small v-if="node.aliases.length">其他名称：{{ node.aliases.join('、') }}</small></button></li></ul>
         </div>
         <button class="button primary" :disabled="loading || !root || (mode === 'paths' && !target) || !!rangeError || !!chapterError">{{ loading ? '检索中…' : '查询关系' }}</button>
       </form>

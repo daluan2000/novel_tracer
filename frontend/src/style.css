@@ -390,7 +390,7 @@ footer p { margin: 0; font-family: 'Noto Sans SC', sans-serif; }
 .graph-candidates button, .graph-edge-list button { width: 100%; text-align: left; background: transparent; border: 1px solid #dce1e8; border-radius: 8px; padding: 12px; cursor: pointer; color: inherit; }
 .graph-candidates button:hover, .graph-edge-list button:hover, .graph-edge-list button.selected { background: #eaf0f7; }
 .graph-edge-list li { margin-bottom: 8px; }
-.graph-edge-list small { display: block; margin-top: 6px; color: #667481; }
+.graph-candidates small, .graph-edge-list small { display: block; margin-top: 6px; color: #667481; overflow-wrap: anywhere; }
 .graph-canvas-wrap { border: 1px solid #dce1e8; border-radius: 12px; overflow: hidden; margin: 22px 0; background: #fcfdfc; }
 .graph-canvas-toolbar { justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid #e8ecef; font-size: 12px; color: #73818b; background: #fff; }
 .graph-canvas-title { display: flex; align-items: center; gap: 14px; }
