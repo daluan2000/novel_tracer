@@ -124,4 +124,17 @@ describe('useRun manual retry', () => {
     expect(terminal).toHaveBeenCalledOnce()
     wrapper.unmount()
   })
+  it('unlocks the composer if creating a run fails', async () => {
+    let run!: ReturnType<typeof useRun>
+    const wrapper = mount(defineComponent({
+      setup() { run = useRun(); return () => h('div') },
+    }))
+    apiMock.createConversationRun.mockRejectedValueOnce(new Error('服务暂不可用'))
+    await expect(run.startConversation('conversation-1', '问题', 5)).rejects.toThrow('服务暂不可用')
+    expect(run.isRunning.value).toBe(false)
+    expect(run.view.status).toBe('idle')
+    expect(FakeEventSource.instances).toHaveLength(0)
+    wrapper.unmount()
+  })
+
 })

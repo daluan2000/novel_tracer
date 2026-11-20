@@ -1,0 +1,66 @@
+:root {
+  font-family: Inter, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  color: #293b36;
+  background: #f6f7f5;
+  font-synthesis: none;
+  --ink: #293b36;
+  --muted: #7b8680;
+  --paper: #fafbf9;
+  --line: #e5e9e3;
+  --accent: #39715b;
+  --accent-dark: #28513f;
+  --green: #39715b;
+  --green-soft: #eaf3ed;
+  --amber: #a67d37;
+  --red-soft: #fff0eb;
+  --shadow: 0 4px 20px #253a2a04;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 360px;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled,
+input:disabled,
+textarea:disabled,
+select:disabled {
+  cursor: not-allowed;
+  opacity: .5;
+}
+
+a {
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

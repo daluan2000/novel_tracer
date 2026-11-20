@@ -60,12 +60,18 @@ export function useRun(onTerminal?: () => void | Promise<void>) {
     question: string,
     maxSteps: number,
   ) {
+    const previous = { ...view }
     closeSource()
     replaceView({ ...emptyRunView(), status: 'queued' })
-    const created = await api.createConversationRun(conversationId, question, maxSteps)
-    runId.value = created.run_id
-    connect(created.run_id)
-    return created
+    try {
+      const created = await api.createConversationRun(conversationId, question, maxSteps)
+      runId.value = created.run_id
+      connect(created.run_id)
+      return created
+    } catch (cause) {
+      replaceView(previous)
+      throw cause
+    }
   }
 
   function restore(turn: ConversationTurn | null) {

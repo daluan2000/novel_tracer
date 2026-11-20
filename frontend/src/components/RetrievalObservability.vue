@@ -87,10 +87,10 @@ defineExpose({ refresh })
 
       <div v-if="status.embedding_enabled" class="embedding-progress" aria-live="polite">
         <div>
-          <strong>{{ status.status === 'building' ? 'Embedding 构建中' : 'Embedding 已构建完成' }}</strong>
+          <strong>{{ status.status === 'building' ? '语义索引构建中' : status.status === 'hybrid_ready' ? '语义索引已就绪' : '语义索引暂不可用' }}</strong>
           <span>{{ status.embedding_progress.percentage }}% · {{ status.embedding_progress.completed.toLocaleString() }}/{{ status.embedding_progress.total.toLocaleString() }} 个片段</span>
         </div>
-        <div class="embedding-progress-track" role="progressbar" aria-label="Embedding 构建进度" :aria-valuenow="status.embedding_progress.percentage" aria-valuemin="0" aria-valuemax="100">
+        <div class="embedding-progress-track" role="progressbar" aria-label="语义索引构建进度" :aria-valuenow="status.embedding_progress.percentage" aria-valuemin="0" aria-valuemax="100">
           <span :style="{ width: `${status.embedding_progress.percentage}%` }"></span>
         </div>
       </div>
@@ -103,7 +103,7 @@ defineExpose({ refresh })
             <small>{{ event.code }}<template v-if="event.fallback"> · 已改用关键词检索</template></small>
           </li>
         </ol>
-        <p v-else class="no-anomaly">语义检索运行正常，暂未发现异常。</p>
+        <p v-else class="no-anomaly">暂无异常记录。</p>
       </div>
     </template>
     <p v-else-if="!statusError" class="no-anomaly">正在读取检索状态…</p>

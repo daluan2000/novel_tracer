@@ -18,7 +18,7 @@ const selectedEdge = ref<GraphEdge | null>(null)
 const groups = ref<GraphGroup[]>([]), evidenceTotal = ref(0), evidenceBusy = ref(false)
 const context = ref<GraphContext | null>(null)
 const typeLabels: Record<string, string> = { person: '人物', place: '地点', organization: '组织', item: '物品', skill: '功法', concept: '专有概念' }
-const phases = { extracting: '抽取实体与关系', resolving: '实体身份消歧', materializing: '保存图谱', publishing: '发布版本' }
+const phases = { extracting: '抽取实体与关系', resolving: '核对人物与事物的身份', materializing: '保存图谱', publishing: '发布版本' }
 const states = { queued: '等待构建', building: '构建中', stopping: '等待当前请求结束', completed: '已完成', failed: '构建失败', stopped: '已停止' }
 const buildErrors: Record<string, string> = {
   graph_structured_output_failed: '模型连续返回不符合结构要求的结果，格式重试次数已用尽。已保存完成的批次，点击“继续构建”可重试当前片段。',
@@ -118,6 +118,9 @@ function chooseNode(id: string) {
   const node = result.value?.nodes.find(n => n.id === id)
   if (node) choose(node)
 }
+function clearEdgeSelection() {
+  evidenceSequence++; selectedEdge.value = null; groups.value = []; evidenceTotal.value = 0; context.value = null; evidenceBusy.value = false
+}
 async function selectEdge(edge: GraphEdge) {
   evidenceSequence++
   evidenceBusy.value = false
@@ -154,14 +157,19 @@ onBeforeUnmount(() => { disposed = true; chapterSequence++; evidenceSequence++; 
   <section class="workspace-panel knowledge-graph">
     <div class="section-heading"><div><p class="eyebrow">知识图谱</p><h2>探索实体与关系</h2></div><span>自动抽取 · 原文可追溯</span></div>
     <p v-if="error" class="global-error" role="alert">{{ error }}</p>
-    <div v-if="status" class="graph-status">
+    <details v-if="status" class="graph-status" :open="!status.available || running || status.job?.status === 'failed'">
+      <summary class="graph-summary"><strong>{{ status.available ? '图谱已就绪' : '准备构建图谱' }}</strong><span v-if="status.counts">{{ status.counts.entity_count }} 个实体 · {{ status.counts.relation_count }} 条关系</span><small>构建与管理</small></summary>
+      <div class="graph-management">
       <div class="graph-status-heading"><strong>{{ status.available ? '图谱可用' : '尚无可用图谱' }}</strong><small v-if="status.active_version">版本 {{ status.active_version.slice(0, 8) }}</small></div>
       <p>{{ status.model_name || '聊天模型未配置' }} · {{ status.source_characters.toLocaleString() }} 字 · 预计 {{ status.estimated_extraction_units }} 个抽取批次</p>
+      <details class="graph-build-options"><summary>构建说明与参数</summary>
       <p v-if="status.max_output_tokens" class="graph-notice">单次输出最多 {{ status.max_output_tokens }} token · 请求超时上限 {{ status.request_timeout_seconds }} 秒。较大片段超时或输出达到上限时自动拆分；其他超时最多额外重试 {{ status.timeout_retries }} 次。</p>
       <p class="graph-notice">点击构建或重建会将全书正文分批发送给已配置的聊天模型，并产生模型用量。重建期间原图谱仍可使用。</p>
+      </details>
       <p v-if="status.error_code" role="alert">图谱暂不可用（{{ status.error_code }}），仍可使用文本检索。</p>
       <p v-if="status.counts">当前图谱：{{ status.counts.entity_count }} 个实体 · {{ status.counts.relation_count }} 条关系</p>
-      <div v-if="status.job" class="graph-progress" aria-live="polite">
+      <details v-if="status.job" class="graph-job-details" :open="running || status.job.status === 'failed'"><summary>构建进度与用量 · {{ states[status.job.status] }}</summary>
+      <div class="graph-progress" aria-live="polite">
         <strong>{{ states[status.job.status] }} · {{ phases[status.job.phase] }}</strong>
         <span>抽取 {{ status.job.extraction.completed }}/{{ status.job.extraction.total }} · 消歧 {{ status.job.resolution.completed }}/{{ status.job.resolution.total }} · {{ status.job.elapsed_seconds.toFixed(1) }} 秒</span>
         <small v-if="status.job.extraction.cached">另有 {{ status.job.extraction.cached }} 批成功返回的候选已缓存，继续处理可复用。</small>
@@ -170,6 +178,7 @@ onBeforeUnmount(() => { disposed = true; chapterSequence++; evidenceSequence++; 
         <small v-if="status.job.usage.unknown_request_count">超时或供应商未返回用量的请求无法统计 token，可能已产生消耗；继续构建会复用已完成批次。</small>
         <p v-if="status.job.error_code" role="alert">{{ buildErrors[status.job.error_code] || '构建未能完成，已保存进度。请检查模型配置后继续构建。' }}</p>
       </div>
+      </details>
       <div class="graph-actions">
         <button v-if="running" class="button" :disabled="busy || status.job?.stop_requested" @click="graph.stop()">{{ status.job?.stop_requested ? '正在停止…' : '停止构建' }}</button>
         <template v-else>
@@ -179,34 +188,37 @@ onBeforeUnmount(() => { disposed = true; chapterSequence++; evidenceSequence++; 
         <button class="text-button" :disabled="busy" @click="graph.refresh()">刷新状态</button>
       </div>
       <details v-if="status.job?.events.length"><summary>构建诊断（最近 {{ status.job.events.length }} 条）</summary><small>过滤项是校验后未采纳的候选；本次停止原因见上方提示。</small><ul><li v-for="(event, i) in status.job.events" :key="i">{{ eventLabel(event.code) }}</li></ul></details>
-    </div>
+      </div>
+    </details>
     <div v-else class="empty-state"><p>正在读取图谱状态…</p></div>
 
     <template v-if="status?.available">
       <form class="graph-controls" @submit.prevent="submit">
-        <label class="field"><span>查询方式</span><select v-model="mode"><option value="neighbors">实体邻居</option><option value="paths">两实体间路径</option></select></label>
+        <label class="field"><span>查询方式</span><select v-model="mode"><option value="neighbors">查看相关人物与事物</option><option value="paths">查找两者之间的联系</option></select></label>
+        <details class="graph-filter-details"><summary>按章节、类型与关联层数筛选</summary><div class="graph-filter-grid">
         <label class="field"><span>实体类型</span><select v-model="entityType"><option value="">全部类型</option><option v-for="type in status.ontology.entity_types" :key="type" :value="type">{{ typeLabels[type] || type }}</option></select></label>
         <label class="field"><span>关系类型</span><select v-model="relationType"><option value="">全部关系</option><option v-for="relation in status.ontology.relation_types" :key="relation.type" :value="relation.type">{{ relation.label }}</option></select></label>
         <label class="field"><span>跳数</span><select v-model="depth"><option v-for="n in [1,2,3]" :key="n" :value="n">{{ n }} 跳</option></select></label>
         <label class="field"><span>起始章节</span><select v-model="start"><option value="">全书开头</option><option v-for="(chapter, i) in chapters" :key="chapter.chapter_id" :value="chapter.chapter_id">{{ i + 1 }} · {{ chapter.title || '无标题区段' }}</option></select></label>
         <label class="field"><span>结束章节</span><select v-model="end"><option value="">全书末尾</option><option v-for="(chapter, i) in chapters" :key="chapter.chapter_id" :value="chapter.chapter_id">{{ i + 1 }} · {{ chapter.title || '无标题区段' }}</option></select></label>
+        </div></details>
         <div class="graph-entity-search"><label class="field"><span>搜索实体或别名</span><input v-model="queryText" placeholder="输入人物、地点、组织…" /></label>
           <div v-if="root" class="tags"><span>已选：{{ root.name }} · {{ typeLabels[root.type] }}</span></div>
           <p v-if="root" class="graph-notice">其他名称：{{ root.aliases.length ? root.aliases.join('、') : '暂无已收录别名' }}</p>
-          <ul v-if="candidates.length" class="graph-candidates"><li v-for="node in candidates" :key="node.id"><button type="button" @click="choose(node)">{{ node.name }} · {{ typeLabels[node.type] }} · {{ node.first_mention?.section_title || node.first_mention?.section_id }} Ln {{ node.first_mention?.start_line }}<small v-if="node.aliases.length">其他名称：{{ node.aliases.join('、') }}</small></button></li></ul>
+          <ul v-if="candidates.length" class="graph-candidates"><li v-for="node in candidates" :key="node.id"><button type="button" @click="choose(node)">{{ node.name }} · {{ typeLabels[node.type] }} · {{ node.first_mention?.section_title || node.first_mention?.section_id }} 行 {{ node.first_mention?.start_line }}<small v-if="node.aliases.length">其他名称：{{ node.aliases.join('、') }}</small></button></li></ul>
         </div>
         <div v-if="mode === 'paths'" class="graph-entity-search"><label class="field"><span>目标实体</span><input v-model="targetText" placeholder="输入另一个实体名称" /></label>
           <div v-if="target" class="tags"><span>已选：{{ target.name }}</span></div>
           <p v-if="target" class="graph-notice">其他名称：{{ target.aliases.length ? target.aliases.join('、') : '暂无已收录别名' }}</p>
-          <ul v-if="targetCandidates.length" class="graph-candidates"><li v-for="node in targetCandidates" :key="node.id"><button type="button" @click="choose(node, 1)">{{ node.name }} · {{ typeLabels[node.type] }} · {{ node.first_mention?.section_title || node.first_mention?.section_id }} Ln {{ node.first_mention?.start_line }}<small v-if="node.aliases.length">其他名称：{{ node.aliases.join('、') }}</small></button></li></ul>
+          <ul v-if="targetCandidates.length" class="graph-candidates"><li v-for="node in targetCandidates" :key="node.id"><button type="button" @click="choose(node, 1)">{{ node.name }} · {{ typeLabels[node.type] }} · {{ node.first_mention?.section_title || node.first_mention?.section_id }} 行 {{ node.first_mention?.start_line }}<small v-if="node.aliases.length">其他名称：{{ node.aliases.join('、') }}</small></button></li></ul>
         </div>
         <button class="button primary" :disabled="loading || !root || (mode === 'paths' && !target) || !!rangeError || !!chapterError">{{ loading ? '检索中…' : '查询关系' }}</button>
       </form>
       <p v-if="rangeError || chapterError" class="field-error" role="alert">{{ rangeError || chapterError }}</p>
-      <p class="graph-notice">范围：{{ start ? chapters.find(c => c.chapter_id === start)?.title || '指定起点' : '全书开头' }} — {{ end ? chapters.find(c => c.chapter_id === end)?.title || '指定终点' : '全书末尾' }}。章节证据不等于剧情时点；多跳连通不自动产生新事实。</p>
+      <p class="graph-notice">范围：{{ start ? chapters.find(c => c.chapter_id === start)?.title || '指定起点' : '全书开头' }} — {{ end ? chapters.find(c => c.chapter_id === end)?.title || '指定终点' : '全书末尾' }}。关系以原文为准，章节顺序未必等于故事发生顺序。</p>
       <template v-if="result">
         <p v-if="result.truncated" class="graph-warning" role="status">结果已截断或检索未完成（{{ result.truncation_reason }}），请缩小范围。</p>
-        <KnowledgeGraphCanvas v-if="result.edges.length" :result="result" :reset-key="`${root?.id}:${mode}`" :root-id="root?.id" :selected-edge-id="selectedEdge?.id" :labels="labels" :symmetric="symmetric" @node="chooseNode" @edge="id => { const edge = result?.edges.find(e => e.id === id); if (edge) selectEdge(edge) }" />
+        <KnowledgeGraphCanvas v-if="result.edges.length" :result="result" :reset-key="`${root?.id}:${mode}`" :root-id="root?.id" :selected-edge-id="selectedEdge?.id" :labels="labels" :symmetric="symmetric" @node="chooseNode" @clear="clearEdgeSelection" @edge="id => { const edge = result?.edges.find(e => e.id === id); if (edge) selectEdge(edge) }" />
         <p v-if="!result.edges.length" class="graph-notice">{{ mode === 'paths' && result.paths.length ? '起点与终点是同一实体：零跳路径。' : result.search_complete ? '在当前图谱、范围及跳数内未找到关系。' : '本次预算内未找到关系，检索尚未完成。' }}</p>
         <ol v-if="result.paths.length" class="graph-paths"><li v-for="(path, i) in result.paths" :key="i">{{ path.node_ids.map(name).join(' — ') }}</li></ol>
         <div class="graph-results">
@@ -214,7 +226,7 @@ onBeforeUnmount(() => { disposed = true; chapterSequence++; evidenceSequence++; 
             {{ name(edge.source) }} {{ symmetric.includes(edge.type) ? '↔' : '→' }} {{ name(edge.target) }} · {{ labels[edge.type] || edge.type }}
             <strong v-if="edge.polarity === 'denied'">（否认）</strong><span v-if="edge.statement_mode === 'character_claim'">（人物说法）</span><small>{{ edge.evidence_total }} 组原文依据</small>
           </button></li></ul></section>
-          <section class="graph-evidence"><h3>原文证据</h3><p v-if="!selectedEdge">点击关系查看原文。</p><article v-for="group in groups" :key="group.id"><blockquote v-for="(span, i) in group.spans" :key="i"><p>{{ span.quote }}</p><small>{{ span.section_title || span.section_id }} · Ln {{ span.start_line }}–{{ span.end_line }}</small><button class="text-button" @click="readContext(span)">展开原文上下文</button></blockquote></article>
+          <section class="graph-evidence"><h3>原文证据</h3><p v-if="!selectedEdge">点击关系查看原文。</p><article v-for="group in groups" :key="group.id"><blockquote v-for="(span, i) in group.spans" :key="i"><p>{{ span.quote }}</p><small>{{ span.section_title || span.section_id }} · 行 {{ span.start_line }}–{{ span.end_line }}</small><button class="text-button" @click="readContext(span)">展开原文上下文</button></blockquote></article>
             <button v-if="groups.length < evidenceTotal" class="text-button" :disabled="evidenceBusy" @click="moreEvidence">加载更多证据（{{ groups.length }}/{{ evidenceTotal }}）</button>
             <div v-if="context" class="context-block"><strong>展开原文上下文（可能包含筛选范围外的邻接段）</strong><p v-for="chunk in context.chunks" :key="chunk.chunk_id"><small>Ln {{ chunk.start_line }}–{{ chunk.end_line }}</small>{{ chunk.text }}</p></div>
           </section>

@@ -6,6 +6,7 @@ import AgentWorkspace from './AgentWorkspace.vue'
 
 const runActions = vi.hoisted(() => ({
   retry: vi.fn(),
+  startConversation: vi.fn(),
   viewOverride: null as Record<string, unknown> | null,
 }))
 
@@ -81,7 +82,7 @@ vi.mock('../composables/useRun', async () => {
       }
       return {
         view: reactive(runActions.viewOverride ?? defaultView),
-        isRunning: ref(false), start: vi.fn(), startConversation: vi.fn(), restore: vi.fn(),
+        isRunning: ref(false), start: vi.fn(), startConversation: runActions.startConversation, restore: vi.fn(),
         retry: runActions.retry, stop: vi.fn(), runId: ref('run-1'),
       }
     },
@@ -107,6 +108,8 @@ const config: ConfigStatus = {
 describe('AgentWorkspace observability', () => {
   beforeEach(() => {
     runActions.retry.mockReset()
+    runActions.startConversation.mockReset()
+    localStorage.clear()
     runActions.viewOverride = null
   })
 
@@ -114,12 +117,15 @@ describe('AgentWorkspace observability', () => {
     const wrapper = mount(AgentWorkspace, { props: { novel, config } })
     await flushPromises()
 
+    expect(wrapper.find('.model-usage-card').exists()).toBe(false)
+    await wrapper.findAll('.detail-tabs button').find(button => button.text() === '用量与诊断')!.trigger('click')
+    await flushPromises()
     expect(wrapper.text()).toContain('模型用量')
     expect(wrapper.text()).toContain('1,234')
     expect(wrapper.text()).toContain('推理 Token')
     expect(wrapper.text()).toContain('structured_output_retry')
     expect(wrapper.text()).toContain('语义检索用量与运行状态')
-    expect(wrapper.text()).toContain('Embedding 已构建完成')
+    expect(wrapper.text()).toContain('语义索引已就绪')
     expect(wrapper.text()).toContain('100%')
     expect(wrapper.text()).toContain('人物关系如何变化')
     expect(wrapper.text()).toContain('当前会话')
@@ -130,7 +136,7 @@ describe('AgentWorkspace observability', () => {
     const wrapper = mount(AgentWorkspace, { props: { novel, config } })
     await flushPromises()
 
-    const button = wrapper.findAll('button').find((item) => item.text().includes('从 Assessor 重试'))
+    const button = wrapper.findAll('button').find((item) => item.text().includes('从 证据核验 重试'))
     expect(button).toBeDefined()
     await button!.trigger('click')
     expect(runActions.retry).toHaveBeenCalledOnce()
@@ -187,4 +193,31 @@ describe('AgentWorkspace observability', () => {
     expect(window.confirm).toHaveBeenCalledOnce()
     expect(api.deleteConversation).toHaveBeenCalledWith('conversation-1')
   })
+  it('keeps the question when switching detail views', async () => {
+    const wrapper = mount(AgentWorkspace, { props: { novel, config } })
+    await flushPromises()
+    await wrapper.get('textarea').setValue('想继续问的问题')
+    await wrapper.findAll('.detail-tabs button').find(button => button.text() === '分析过程')!.trigger('click')
+    expect(wrapper.find('textarea').exists()).toBe(false)
+    expect(wrapper.get('.timeline-card').text()).toContain('执行记录')
+    await wrapper.findAll('.detail-tabs button').find(button => button.text() === '对话')!.trigger('click')
+    expect((wrapper.get('textarea').element as HTMLTextAreaElement).value).toBe('想继续问的问题')
+  })
+
+  it('creates a conversation automatically for the first question and prevents duplicate submits', async () => {
+    vi.mocked(api.conversations).mockResolvedValueOnce({ items: [], total: 0 })
+    const created = { version: 1, conversation_id: 'new-1', novel_id: 'book-1', title: '新会话', created_at: '', updated_at: '', turns: [] }
+    vi.mocked(api.createConversation).mockResolvedValueOnce(created)
+    runActions.startConversation.mockResolvedValueOnce({ run_id: 'run-2' })
+    const wrapper = mount(AgentWorkspace, { props: { novel, config } })
+    await flushPromises()
+    await wrapper.get('textarea').setValue('主要人物是谁？')
+    await wrapper.get('.composer').trigger('submit')
+    await wrapper.get('.composer').trigger('submit')
+    await flushPromises()
+    expect(api.createConversation).toHaveBeenCalledWith('book-1')
+    expect(runActions.startConversation).toHaveBeenCalledExactlyOnceWith('new-1', '主要人物是谁？', 16)
+    expect((wrapper.get('textarea').element as HTMLTextAreaElement).value).toBe('')
+  })
+
 })

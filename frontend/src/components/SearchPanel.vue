@@ -45,7 +45,7 @@ const rangeSummary = computed(() => {
 })
 
 function chapterDisplay(sectionId: string, fallback: string | null) {
-  return chapterOptions.value.find((chapter) => chapter.sectionId === sectionId)?.label || fallback || '未命名 Section'
+  return chapterOptions.value.find((chapter) => chapter.sectionId === sectionId)?.label || fallback || '未命名章节'
 }
 
 watch(() => props.novel.novel_id, async (novelId) => {
@@ -126,8 +126,7 @@ async function toggleContext(hit: SearchHit) {
 
 <template>
   <section class="workspace-panel">
-    <div class="section-heading"><div><p class="eyebrow">混合检索</p><h2>查找原文</h2></div><span>关键词与语义联合检索</span></div>
-    <RetrievalObservability ref="retrievalObservability" :novel-id="novel.novel_id" :refresh-key="retrievalRevision" />
+    <div class="section-heading"><div><p class="eyebrow">混合检索</p><h2>查找原文</h2></div><span>支持限定章节范围</span></div>
     <form class="search-form" @submit.prevent="search">
       <div class="search-primary-row">
         <label class="field grow"><span>关键词（多个词用空格分隔）</span><input v-model="query" placeholder="例如：吕树 吕小鱼" /></label>
@@ -136,13 +135,13 @@ async function toggleContext(hit: SearchHit) {
       </div>
       <div class="chapter-range">
         <label class="field">
-          <span>起始章节（可搜索）</span>
+          <span>从哪一章开始</span>
           <input v-model="startChapterValue" list="search-start-chapters" :disabled="chaptersLoading" :aria-invalid="!!rangeError" placeholder="全书开头" autocomplete="off" />
           <datalist id="search-start-chapters"><option v-for="chapter in chapterOptions" :key="chapter.id" :value="chapter.label" /></datalist>
         </label>
         <span class="range-separator" aria-hidden="true">至</span>
         <label class="field">
-          <span>结束章节（可搜索）</span>
+          <span>到哪一章结束</span>
           <input v-model="endChapterValue" list="search-end-chapters" :disabled="chaptersLoading" :aria-invalid="!!rangeError" placeholder="全书末尾" autocomplete="off" />
           <datalist id="search-end-chapters"><option v-for="chapter in chapterOptions" :key="chapter.id" :value="chapter.label" /></datalist>
         </label>
@@ -156,8 +155,8 @@ async function toggleContext(hit: SearchHit) {
       <article v-for="hit in results" :key="hit.chunk_id" class="search-result">
         <div class="result-meta">
           <span>{{ chapterDisplay(hit.section_id, hit.section_title) }}</span>
-          <span>Ln {{ hit.start_line }}–{{ hit.end_line }}</span>
-          <span>Score {{ hit.score.toFixed(1) }}</span>
+          <span>行 {{ hit.start_line }}–{{ hit.end_line }}</span>
+          <span>相关度 {{ hit.score.toFixed(1) }}</span>
         </div>
         <p>{{ hit.snippet }}</p>
         <div class="result-footer">
@@ -166,11 +165,12 @@ async function toggleContext(hit: SearchHit) {
         </div>
         <div v-if="openChunk === hit.chunk_id" class="context-block">
           <p v-for="chunk in contexts[hit.chunk_id]" :key="chunk.chunk_id" :class="{ focused: chunk.chunk_id === hit.chunk_id }">
-            <span>Ln {{ chunk.start_line }}–{{ chunk.end_line }}</span>{{ chunk.text }}
+            <span>行 {{ chunk.start_line }}–{{ chunk.end_line }}</span>{{ chunk.text }}
           </p>
         </div>
       </article>
     </div>
     <div v-else-if="!loading" class="empty-state"><span>⌕</span><p>{{ hasSearched ? '当前章节范围内未找到相关原文。' : '输入人物、地点或事件，查找小说中的相关原文。' }}</p></div>
+    <details class="search-status-details"><summary>检索状态与用量</summary><RetrievalObservability ref="retrievalObservability" :novel-id="novel.novel_id" :refresh-key="retrievalRevision" /></details>
   </section>
 </template>
