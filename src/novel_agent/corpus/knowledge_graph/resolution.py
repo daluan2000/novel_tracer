@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 
+from .concurrency import parallel_map
 from .models import ResolutionDecision
 from .ontology import SYMMETRIC, digest, normalize
 
@@ -34,12 +35,38 @@ def representative_contexts(items: list[dict], position: int, limit: int = 3) ->
     return selected[:limit]
 
 
-def resolve(batches: list[dict], version: str, invoke, checkpoint, event):
+def dependency_groups(ordered):
+    """Connect every name/mention lookup that can touch the same registry entry."""
+    parents, seen = list(range(len(ordered))), {}
+
+    def root(index):
+        while parents[index] != index:
+            parents[index] = parents[parents[index]]
+            index = parents[index]
+        return index
+
+    for index, (_, _, entity) in enumerate(ordered):
+        keys = [("mention", entity["type"], m["start_char"], m["end_char"])
+                for m in entity["mentions"]]
+        if entity["name"] not in GENERIC_NAMES:
+            keys.append(("name", entity["type"], normalize(entity["name"])))
+        for key in keys:
+            if key in seen:
+                parents[root(index)] = root(seen[key])
+            else:
+                seen[key] = index
+    groups = defaultdict(list)
+    for index, item in enumerate(ordered):
+        groups[root(index)].append(item)
+    # Start long dependency chains first; retain the global order inside each.
+    return sorted(groups.values(), key=lambda group: (-len(group), group[0][0]))
+
+
+def _resolve_entities(ordered, version, invoke, checkpoint, event, check):
     registry, by_mention, mapping = {}, {}, {}
     by_name = defaultdict(set)
-    ordered = sorted(((batch, entity) for batch in batches for entity in batch["entities"]),
-                     key=lambda pair: (min(m["start_char"] for m in pair[1]["mentions"]), pair[0]["unit_id"], pair[1]["local_id"]))
-    for sequence, (batch, entity) in enumerate(ordered):
+    for sequence, batch, entity in ordered:
+        check()
         key = (batch["unit_id"], entity["local_id"])
         mentions = entity["mentions"]
         marks = [(m["start_char"], m["end_char"], entity["type"]) for m in mentions]
@@ -129,12 +156,41 @@ def resolve(batches: list[dict], version: str, invoke, checkpoint, event):
         if decision.decision == "ambiguous":
             event("entity_identity_ambiguous")
 
+    return registry, mapping
+
+
+def resolve(batches: list[dict], version: str, invoke, checkpoint, event, *,
+            concurrency: int = 1, check=lambda: None, on_error=lambda: None):
+    pairs = sorted(((batch, entity) for batch in batches for entity in batch["entities"]),
+                   key=lambda pair: (min(m["start_char"] for m in pair[1]["mentions"]),
+                                     pair[0]["unit_id"], pair[1]["local_id"]))
+    ordered = [(sequence, batch, entity) for sequence, (batch, entity) in enumerate(pairs)]
+    if concurrency == 1:
+        registry, mapping = _resolve_entities(ordered, version, invoke, checkpoint, event, check)
+    else:
+        results = parallel_map(
+            lambda group: _resolve_entities(group, version, invoke, checkpoint, event, check),
+            dependency_groups(ordered), concurrency, check=check, on_error=on_error)
+        registry, mapping = {}, {}
+        for group_registry, group_mapping in results:
+            registry.update(group_registry)
+            mapping.update(group_mapping)
+        # Match the surviving entries' original insertion order, not worker order.
+        creation_order = {}
+        for sequence, _, entity in ordered:
+            eid = digest([version, min((m["start_char"], m["end_char"], entity["type"])
+                                       for m in entity["mentions"])])
+            creation_order.setdefault(eid, sequence)
+        registry = dict(sorted(registry.items(), key=lambda item: creation_order[item[0]]))
+    check()
+
     # Resolve explicit alias links only after both endpoints have been processed.
     # A later identity statement can then join entities (and their earlier mentions
     # and relations) that were independently registered in previous windows.
     links = [(batch, link) for batch in sorted(batches, key=lambda b: b["unit_id"])
              for link in batch["identity_links"]]
     for sequence, (batch, link) in enumerate(links):
+        check()
         source_id = mapping[(batch["unit_id"], link["source"])]
         target_id = mapping[(batch["unit_id"], link["target"])]
         source, target = registry[source_id], registry[target_id]
