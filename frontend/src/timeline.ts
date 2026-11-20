@@ -5,6 +5,10 @@ const toolNames: Record<string, string> = {
   search_novel: '检索小说原文',
   read_context: '读取原文上下文',
   read_section: '读取章节原文',
+  search_graph_entities: '搜索图谱实体',
+  get_graph_entity: '查询实体名称',
+  get_graph_relations: '查询实体关系',
+  find_graph_paths: '查询关联路径',
 }
 
 function nodeName(value: string | null) {
@@ -26,6 +30,7 @@ export function timelineText(event: RunEvent) {
     return `${nodeName(event.node)} 多次返回错误格式，已停止重试`
   }
   if (detail.tool_calls?.length) return `准备${detail.tool_calls.map((call) => toolNames[call.name] ?? call.name).join('、')}`
+  if (detail.graph_queries?.length) return detail.graph_queries.map(q => `已完成${toolNames[q.tool] || q.tool}：${q.node_count} 个实体、${q.edge_count} 条关系 · 图谱 ${q.graph_version.slice(0, 8)}${q.truncated ? '（结果已截断）' : ''}`).join('；')
   if (detail.tools?.length) return `已完成：${detail.tools.map((name) => toolNames[name] ?? name).join('、')}`
   if (detail.evidence_count !== undefined) return `当前已校验 ${detail.evidence_count} 条证据`
   if (detail.rationale) return detail.rationale

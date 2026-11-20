@@ -51,6 +51,7 @@ class AgentState(TypedDict):
     content_fallback_count: int
     model_call_count: int
     token_usage: dict[str, Any]
+    graph_version: str | None
 
 
 def initial_state(
@@ -90,4 +91,5 @@ def initial_state(
         "content_fallback_count": 0,
         "model_call_count": 0,
         "token_usage": {},
+        "graph_version": None,
     }

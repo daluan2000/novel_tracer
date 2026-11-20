@@ -25,6 +25,9 @@ from novel_agent.web.events import TERMINAL_STATUSES
 from novel_agent.web.conversations import ConversationStore
 from novel_agent.web.runs import Executor, RunManager
 from novel_agent.web.store import MAX_UPLOAD_BYTES, NovelStore, StoredNovel
+from novel_agent.corpus.knowledge_graph.service import KnowledgeGraphService
+from novel_agent.corpus.knowledge_graph.models import GraphError
+from novel_agent.web.knowledge_graph import graph_router
 
 
 class RunRequest(BaseModel):
@@ -75,6 +78,7 @@ def create_app(
     model_factory: Callable[[], Any] | None = None,
     upload_limit: int = MAX_UPLOAD_BYTES,
     data_root: str | Path | None = None,
+    graph_model_factory: Callable[[], Any] | None = None,
 ) -> FastAPI:
     resolved_data_root = (
         Path(data_root) if data_root is not None else novel_agent_data_dir()
@@ -84,25 +88,35 @@ def create_app(
         data_root=resolved_data_root,
     )
     conversations = ConversationStore(resolved_data_root)
+    knowledge_graph = KnowledgeGraphService(resolved_data_root, store, graph_model_factory)
     runs = RunManager(
         executor=executor,
         model_factory=model_factory,
         conversations=conversations,
+        graph_reader_factory=knowledge_graph.capture,
     )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         await store.open()
         conversations.open()
+        await asyncio.to_thread(knowledge_graph.open)
         try:
             yield
         finally:
+            await asyncio.to_thread(knowledge_graph.close)
             await store.close()
 
     app = FastAPI(title="Novel Agent Web", version="0.2.0", lifespan=lifespan)
     app.state.novels = store
     app.state.conversations = conversations
     app.state.runs = runs
+    app.state.knowledge_graph = knowledge_graph
+    app.include_router(graph_router(knowledge_graph))
+
+    @app.exception_handler(GraphError)
+    async def graph_failure(_request, error: GraphError):
+        return JSONResponse(status_code=error.status, content={"detail": str(error), "code": error.code})
 
     @app.get("/api/config")
     def config_status() -> dict[str, Any]:

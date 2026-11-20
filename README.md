@@ -1,358 +1,323 @@
 # Novel Agent
 
-> 基于 LangGraph 的长文本证据研究 Agent 系统
+基于 LangGraph 的小说长文本分析 Agent。上传 TXT、提出问题后，系统会规划调查任务，通过原文和知识图谱收集证据，校验引文，再生成附带章节、文本块与行号的回答。
 
-Novel Agent 面向小说及其他长篇文本的深度分析场景，将文档解析、混合检索、任务规划、工具调用、证据校验和结论生成组织为一条可观测、可恢复的 Agent 工作流。上传本地 TXT 并提出开放式问题后，系统会自主拆解调查任务，检索和回读原文，持续评估证据缺口，并生成附带原文位置的分析结论。
-
-系统以“结论可追溯、过程可观测、执行有边界”为核心：所有证据都必须通过原文精确校验，调查过程受显式预算和去重机制约束，关键节点、工具调用、模型用量、异常与降级事件均可在 Web 工作台中实时查看。
-
+Web 工作台支持小说管理、多轮会话、章节浏览、文本检索、知识图谱，以及 Agent 执行过程和模型用量的实时查看。
 
 ![Novel Agent Web 工作台](./assets/ui.png)
 
+## 导航
 
-## 核心能力
-
-### Agent 编排与推理
-
-- 基于 LangGraph 构建 Planner、Researcher、ToolNode、Assessor、Replanner、Writer 多阶段状态图。
-- 简单问题使用本地单任务计划快速执行，复杂问题由 Planner 拆解并在证据不足时动态 Replan。
-- 计划、证据、假设、未解决问题和工具历史均进入显式状态，支持节点级路由与断点续跑。
-- 通过最大调查步数、单任务轮次、证据数量和重复调用保护约束执行成本，避免无边界循环。
-
-### 长文本解析与检索
-
-- 支持 UTF-8、UTF-8-SIG、UTF-16、GB18030 等常见 TXT 编码。
-- 识别阿拉伯数字、中文数字、英文、特殊名称和无编号短标题，兼容同一文本中的混合标题格式。
-- 标题识别置信度不足时按段落和长度安全降级切分；所有 Chunk 保留行号与字符偏移，可精确定位原文。
-- 提供结构查看、混合搜索、上下文读取和 Section 读取四类只读工具。
-- 使用中文 BM25 与可选 Embedding 语义召回，通过 RRF 融合结果并映射回稳定 Chunk。
-
-### 证据可信度与运行可靠性
-
-- 对模型提交的引文执行原文精确校验，未出现在原文中的内容无法进入证据状态。
-- 持久化小说、Manifest 与向量索引，服务重启后自动恢复并校验正文哈希。
-- Embedding 不可用、超时或缓存无效时自动降级到 BM25，不阻断主调查流程。
-- 结构化输出异常可在节点内安全重试；运行失败后可从最近节点恢复，保留既有计划、证据和用量数据。
-
-### 可观测 Web 工作台
-
-- 每本小说支持多个持久化会话和连续追问；后续问题使用最近 10 个成功轮次的问题与最终答案作为上下文。
-- 实时展示 Agent 节点图、调查计划、工具调用、执行时间线、证据与最终答案。
-- 按节点统计模型输入、输出、思考与缓存 token，并展示耗时、异常、重试和降级记录。
-- 提供小说管理、章节浏览、文本检索、Embedding 索引构建与消耗监控。
-- 支持在模型调用完成后的节点边界安全停止任务。
-
-## 系统架构
-
-系统由文档处理、检索、Agent 编排、运行时和交互层组成。语料层负责把原始文本转换为带稳定位置的 Section、Chunk 与 Passage；Agent 通过受控只读工具访问检索层，不直接修改原始文档；运行时统一处理模型配置、结构化输出、重试与指标采集。
-
-```mermaid
-flowchart LR
-    U[TXT 文档] --> C[解析与结构识别]
-    C --> P[Section / Chunk / Passage]
-    P --> R[BM25 + Embedding + RRF]
-    Q[用户问题] --> A[LangGraph Agent]
-    A <-->|只读工具| R
-    A --> E[证据校验与状态管理]
-    E --> O[可追溯结论]
-    A -.运行事件.-> W[Web 工作台 / SSE]
-    R -.检索指标.-> W
-```
-
-### Agent 执行图
-
-```mermaid
-flowchart TD
-    A[Planner] --> B[Researcher]
-    B -->|tool_calls| C[ToolNode]
-    B -->|不再调用工具| E[Assessor / Quote Validation]
-    C --> E
-    E -->|证据不足| B
-    E -->|复杂问题需要重规划| F[Replanner]
-    F --> B
-    E -->|证据充分或预算耗尽| G[Writer]
-    G --> H[END]
-```
+- [快速开始](#快速开始)
+- [问答与检索机制](#问答与检索机制)
+- [图知识库](#图知识库)
+- [配置参考](#配置参考)
+- [运行与故障恢复](#运行与故障恢复)
+- [数据存储与外部请求](#数据存储与外部请求)
+- [开发与验证](#开发与验证)
+- [能力边界](#能力边界)
 
 ## 快速开始
 
-### 环境准备
+### 1. 安装依赖
 
-项目要求：
-
-- Python 3.11+
-- Node.js 20.19.x 或 22.12+ 与 npm（Vite 7 的要求，仅使用后端 API 时可不安装）
-
-安装后端与前端依赖：
+在项目根目录操作。需要 Python 3.11+，以及 Node.js 20.19.x 或 22.12+ 与 npm（Vite 7 的要求；仅使用后端 API 时可省略前端依赖）。
 
 ```powershell
-python --version
 python -m pip install -e ".[dev]"
 Set-Location frontend
 npm install
 Set-Location ..
-```
-
-复制环境变量模板并填写模型配置：
-
-```powershell
 Copy-Item .env.example .env
 ```
 
-推荐开发时一键启动前后端：
+以上复制命令用于首次配置；已有 `.env` 时直接编辑该文件。
 
-```powershell
-python .\start_dev.py
-```
+### 2. 配置聊天模型
 
-浏览器访问 <http://127.0.0.1:5173>。此模式由 Vite 提供前端热更新，并将 `/api` 代理到 <http://127.0.0.1:8000>。
-
-> 只想先检查本机依赖是否齐全时，运行 `python .\start_dev.py --check`；该命令不会启动服务。
-
-## 模型配置
-
-`.env` 最少只需提供 API Key；`MODEL_NAME` 省略时使用 `gpt-4.1-mini`：
+在 `.env` 中填写凭据和模型名称：
 
 ```dotenv
 OPENAI_API_KEY=your-key
 MODEL_NAME=gpt-4.1-mini
 ```
 
-使用其他 OpenAI-compatible 服务时再设置：
+使用其他 OpenAI-compatible 服务时，设置 `OPENAI_BASE_URL`。模型需要支持 Tool Calling、通过工具调用返回结构化对象，以及足够长的上下文。部分模型的思考模式与 named `tool_choice` 不兼容，可设置 `MODEL_THINKING_MODE=disabled`。完整参数见[配置参考](#配置参考)。
 
-```dotenv
-OPENAI_BASE_URL=https://your-provider.example/v1
-```
-
-Thinking mode 可能不兼容本项目结构化输出使用的 named `tool_choice`。完整 Agent 流程建议关闭思考：
-
-```dotenv
-MODEL_THINKING_MODE=disabled
-```
-
-程序会按模型名和服务地址适配常见接口：千问/Qwen 发送 `enable_thinking=false`，DeepSeek、GLM、Kimi 等兼容接口发送 `thinking.type=disabled`。也可使用 `off` 或 `false`；开启时使用 `enabled`、`on` 或 `true`。设置为 `auto` 或留空时，通常不发送思考参数，但 DeepSeek 模型仍默认关闭，以保持原有兼容行为。
-
-所选模型必须同时支持：
-
-1. Tool Calling。
-2. 使用 Tool Calling 返回结构化对象。
-3. 足够长的上下文窗口。
-
-项目默认使用 function-calling 模式生成结构化输出，以兼容更多 OpenAI-compatible 服务。
-如果兼容服务偶发返回普通文本、空结果或不完整结构，程序会在同一节点内安全重试：
-
-```dotenv
-# 首次调用之外的额外尝试次数，允许 0-5，默认 2
-NOVEL_AGENT_STRUCTURED_RETRIES=2
-```
-
-合法的完整 JSON 文本会在通过目标 Pydantic Schema 校验后被接受；余额、认证、限流和网络异常不会进入这层格式重试。诊断只记录节点、Schema、次数和失败类别，不保存模型原始响应。
-
-单次聊天模型请求默认最多等待 120 秒，避免供应商连接异常时 Agent 永久停在上一个已完成节点。可按供应商延迟调整：
-
-```dotenv
-MODEL_REQUEST_TIMEOUT_SECONDS=120
-```
-
-### 配置项速查
-
-| 变量 | 默认值 | 作用 |
-|---|---:|---|
-| `OPENAI_API_KEY` | 无 | 聊天模型凭据，运行 Agent 必填 |
-| `OPENAI_BASE_URL` | 服务商默认值 | OpenAI-compatible API 地址 |
-| `MODEL_NAME` | `gpt-4.1-mini` | 聊天模型名称 |
-| `MODEL_THINKING_MODE` | 空（自动） | `enabled` / `disabled`；DeepSeek 默认关闭 |
-| `MODEL_REQUEST_TIMEOUT_SECONDS` | `120` | 单次聊天请求超时，合法范围 5–600 秒 |
-| `NOVEL_AGENT_TEMPERATURE` | `0` | 聊天模型温度 |
-| `NOVEL_AGENT_MAX_STEPS` | `16` | Web 页面默认调查步数；接口最终限制为 1–100 |
-| `NOVEL_AGENT_STRUCTURED_RETRIES` | `2` | 结构化输出额外重试次数，合法范围 0–5 |
-| `NOVEL_AGENT_DATA_DIR` | `output` | 小说、Manifest 和向量索引的数据根目录 |
-| `EMBEDDING_MODEL` | 空 | 留空时仅使用 BM25，并禁用页面上的 Embedding 开关 |
-| `EMBEDDING_API_KEY` | `OPENAI_API_KEY` | Embedding 服务凭据 |
-| `EMBEDDING_BASE_URL` | `OPENAI_BASE_URL` | Embedding 服务地址 |
-| `EMBEDDING_REQUEST_TIMEOUT_SECONDS` | `30` | 单次 Embedding 请求超时，合法范围 5–600 秒 |
-
-### 混合检索配置
-
-没有完整向量缓存时，Embedding 默认关闭，系统只使用本地中文 BM25，不会发起 Embedding 请求。要让前端开关可用，先配置供应商实际支持的模型：
-
-```dotenv
-EMBEDDING_MODEL=your-embedding-model
-```
-
-Embedding 默认复用 `OPENAI_API_KEY` 和 `OPENAI_BASE_URL`。如需使用不同供应商，可单独设置：
-
-```dotenv
-EMBEDDING_API_KEY=your-embedding-key
-EMBEDDING_BASE_URL=https://your-embedding-provider.example/v1
-EMBEDDING_REQUEST_TIMEOUT_SECONDS=30
-```
-
-上传小说时只同步建立约 500 字的 Passage 和 BM25 索引。没有缓存时，用户在当前小说信息栏显式开启 Embedding 后，系统才会在后台构建向量索引，并实时显示已编码片段数和百分比；开关按小说生效，同时影响 Agent 和文本检索。Embedding 每批最多发送 10 条文本以兼容千问接口，请求默认 30 秒超时。缓存默认写入 `output/indexes`，关闭开关不会删除缓存。服务启动或上传时若检测到当前模型对应的完整有效缓存，会自动启用该小说的 Embedding 并显示“已构建完成”，不会重新发送正文。
-
-小说原文件和版本化 Manifest 默认保存在 `output/novels/<novel_id>`。服务每次启动都会恢复其中的小说并校验正文哈希；再次手动开启 Embedding 时，有效的向量缓存会直接加载，不再重复发送正文。相同正文即使文件名或编码不同也只保留一份，并返回原有 `novel_id`。可通过环境变量修改小说与索引的数据根目录：
-
-```dotenv
-NOVEL_AGENT_DATA_DIR=output
-```
-
-备份时应先停止服务，再整体复制该目录；`novels` 和 `indexes` 需要一起保留。Manifest 或原文件损坏时只会跳过对应小说，不会阻止其他小说恢复。
-
-前端的“Embedding 消耗与检索状态”会显示文档/查询请求次数、编码文本数、输入字符数、缓存命中、失败请求和 BM25 降级次数，并保留最近 50 条安全事件。多数 OpenAI-compatible Embedding 接口不返回可靠 token 用量，因此这里明确以字符数计量，不将其标记为 token；供应商原始异常正文和凭据不会返回浏览器。
-
-## 使用方式
-
-### 开发模式
-
-首次运行前按“快速开始”安装依赖。启动脚本会同时运行 8000 端口的后端与 5173 端口的 Vite 前端；按 `Ctrl+C` 会停止两个服务。
-
-Windows PowerShell：
+### 3. 启动并使用
 
 ```powershell
 python .\start_dev.py
 ```
 
-Linux：
+浏览器访问 <http://127.0.0.1:5173>；后端位于 <http://127.0.0.1:8000>，API 文档位于 <http://127.0.0.1:8000/docs>。Linux 使用 `python3 start_dev.py`。按 `Ctrl+C` 停止前后端，仅检查依赖可运行 `python start_dev.py --check`。
 
-```bash
-python3 start_dev.py
+1. 上传 `.txt` 小说，查看解析出的章节和正文块。支持常见中文编码，单文件上限为 50 MiB。
+2. 在“智能分析”中新建会话并提问；追问使用最近 10 个成功轮次的问题和最终答案作为上下文。
+3. 在“结构概览”和“文本检索”中浏览章节、查找片段、展开原文。
+4. 需要语义召回时，配置 Embedding 并在当前小说上开启索引构建。
+5. 需要实体关系浏览和图检索时，进入“知识图谱”手动构建图谱。
+
+Embedding 与知识图谱是独立的可选能力；仅配置聊天模型即可使用基于 BM25 的问答。
+
+## 问答与检索机制
+
+### Agent 调查流程
+
+```mermaid
+flowchart TD
+    Q[用户问题] --> P[Planner：制定调查任务]
+    P --> R[Researcher：选择工具]
+    R --> G[图工具：实体、别名、关系、路径]
+    R --> T[文本搜索：BM25 + 可选向量召回 + RRF]
+    R --> C[原文读取：上下文、章节]
+    G --> A[Assessor：整理证据并校验引文]
+    T --> A
+    C --> A
+    R -->|无需调用工具| A
+    A -->|证据不足| R
+    A -->|复杂问题需要重规划| RP[Replanner]
+    RP --> R
+    A -->|证据充分或预算耗尽| W[Writer：生成带引用的回答]
 ```
 
-脚本会在启动前检查 `8000` 和 `5173`。若发现监听进程，会显示端口、PID 和进程名，并询问是否终止；只有输入 `y` 或 `yes` 才会清理进程并继续，直接回车或输入其他内容会保留原进程并取消启动。无法识别 PID 时脚本不会尝试清理。
+简单事实问题使用本地单任务计划，复杂问题由 Planner 拆成最多 3 个调查任务。Researcher 根据任务和证据缺口选择工具；Assessor 提取证据、更新任务状态并决定下一步。模型提交的引文必须通过原文逐字校验，Writer 使用已验证材料回答。
 
-也可以分别启动后端与 Vite：
+默认每轮最多调用 2 个工具、每个任务最多调查 2 轮并保留 6 条证据，最多重规划 2 次。默认调查步数为 16，接口允许 1–100；步数统计 Researcher 回合。重复调用保护和任务预算限制循环，预算耗尽时会披露未解决项。
 
-```powershell
-# 终端 1
-python -m novel_agent
+### 三种检索如何配合
 
-# 终端 2
-Set-Location frontend
-npm run dev
-```
+| 检索方式 | 实现 | 启用条件 |
+|---|---|---|
+| 关键词检索 | 在约 500 字的 Passage 上执行中文 BM25，叠加原词和章节标题匹配加分 | 上传解析后即可使用 |
+| 向量检索 | 将查询编码为向量，与正文片段计算余弦相似度 | 当前小说已启用 Embedding 且索引就绪 |
+| 图检索 | 按名称或别名定位实体，在 SQLite 中遍历邻居和路径，返回原文证据 | 当前小说有已发布图谱，且 Agent 选择调用图工具 |
 
-### 构建后运行
+一次 `search_novel` 调用内部，关键词和向量各召回最多 30 个片段，用 RRF 累加 `1 / (60 + 排名)` 融合结果，再按正文块去重并优先分散章节。默认返回 3 条、最多 8 条。向量未启用、构建中或查询失败时使用 BM25 结果。
 
-后端会直接托管 `frontend/dist`。先构建前端，再启动单一服务：
+图工具与文本搜索由 Researcher 按需选择，在 Assessor 的证据审查阶段汇合。当前没有三路统一重排器，也不强制每次问答都查询图谱。图谱返回的别名可由 Agent 用于补充文本搜索，程序不会自动展开所有别名。
+
+例如询问“甲和乙有什么联系”，Agent 可以先定位实体、查询关系或路径，再搜索相关名称和事件、展开原文。人物成长或关系变化问题还需要不同阶段的原文证据；多跳连通本身不能推导出新的事实关系。
+
+### Agent 可用工具
+
+| 工具 | 作用与限制 |
+|---|---|
+| `get_book_structure` | 查看结构总览；可分页读取章节，每页最多 20 条 |
+| `search_novel` | BM25 与可选向量混合搜索，默认 3 条、最多 8 条 |
+| `read_context` | 默认读取指定 Chunk，最多附带前后各 1 个 Chunk |
+| `read_section` | 按章节读取连续 Chunk，默认 2 个、最多 3 个 |
+| `search_graph_entities` | 按主名称或别名找实体，默认 5 条、最多 8 条 |
+| `get_graph_entity` | 查看主名称、全部已收录别名及前 8 处原文提及 |
+| `get_graph_relations` | 展开最多 2 跳关系，最多 20 个节点、20 条边 |
+| `find_graph_paths` | 查两个实体间最多 3 跳、3 条最短关联路径 |
+
+前四个工具始终可用，后四个仅在本轮捕获到可用图谱时注册。工具限定在当前小说内，只读访问数据；图工具输出设有 12000 字符预算，并标记截断结果。
+
+## 图知识库
+
+图知识库是从小说正文派生的独立索引，由实体、别名、语义关系和原文证据组成。使用本地 SQLite，无需额外数据库服务，也不依赖 Embedding。构建复用当前聊天模型配置；浏览和查询已发布图谱时不调用模型。
+
+### 构建流程
+
+在“知识图谱”页点击“构建图谱”后，后台依次执行：
+
+1. **划分窗口**：沿用现有正文块，每个抽取窗口正文最多 2500 字，前后各带最多 300 字上下文。
+2. **模型抽取**：提取人物、地点、组织、物品、功法、专有概念，以及师徒、亲属、隶属、敌对、持有、使用等关系和身份线索。
+3. **原文校验**：逐字定位名称与证据，补齐章节、Chunk、行号和字符偏移，过滤无效锚点、关系类型及端点。
+4. **实体归并**：处理重复提及、同名消歧与明确别名线索，将局部关系映射到统一实体，合并重复关系的证据。
+5. **保存发布**：写入暂存版本，检查批次、外键和证据完整性后原子发布。
+
+构建会分批向聊天模型发送正文，页面显示进度、请求数和已报告的 token 用量；供应商未返回的用量标为未知。当前全局同时执行一个图谱构建任务，其他小说排队；图谱构建与 Agent 问答使用独立任务管理。
+
+### 多名称与同名实体
+
+- 全名、简称、别名、绰号和尊号在原文有明确身份依据时可归并。例如原文明示“孙悟空”“悟空”“孙大圣”“齐天大圣”为同一人后，可用任一已收录名称查到该实体，并查看其他名称。
+- 先分别出现、后文才确认身份的名称，会在身份核对阶段合并其早期提及和关系。
+- 同书、同名、同类型仅有一个候选时优先复用；“不确定”或没有异人依据的“新建”结果不会直接生成副本。另建同名实体需要模型引用原文中的区分依据，多个已知同名身份仍需消歧。
+- 消歧优先使用最近的剧情上下文，并保留早期身份锚点；不同名称、泛化称谓和假冒身份不因相似度而归并。
+
+### 浏览与问答
+
+页面支持实体与别名搜索、最多 3 跳的邻居与最短路径、章节及类型过滤。点击关系可查看证据并展开原文。搜索优先主名称精确匹配、别名精确匹配，再到前缀和包含匹配；图遍历设有跳数、数量和时间预算。
+
+关系区分肯定与否认、叙述与人物说法。路径查询使用肯定关系，人物说法仍需结合原文审查。未找到路径，只表示在当前图谱、范围和预算内未找到，不能断言原文中没有联系。
+
+问答每轮开始时固定图谱版本。期间发布新版本不会改变本轮所读版本；未构建或图谱不可用时，问答继续使用文本工具。
+
+### 停止、继续与重建
+
+| 操作或状态 | 行为 |
+|---|---|
+| 停止 | 在请求边界检查停止标记，保存已完成结果 |
+| 继续构建 | 复用抽取与归并检查点，要求正文、模型及规则等构建指纹一致 |
+| 服务重启 | 未完成任务标记为停止，需手动继续；不会自动发送正文或调用模型 |
+| 重建 | 创建暂存版本，旧图谱继续可查，完成后整体发布；历史版本保留 |
+| 规则或模型变化 | 已发布图谱仍可读；旧任务指纹不匹配时需重建，新规则在新生成结果中生效 |
+
+输出截断时切换精简抽取，由模型引用片段编号、程序补齐引文与位置，并按需拆分窗口，最小核心片段为 200 字。较大窗口超时也会拆分，较小窗口及消歧请求执行有限超时重试。
+
+成功解析的候选先缓存，后续本地处理失败后可继续复用；未通过校验的候选不开放查询。最小窗口完整返回时保留全部有效候选，并提示候选密集。详细策略见[技术设计与接口](docs/novel-knowledge-graph-design.md)。图谱 API 前缀为 `/api/novels/{novel_id}/graph`，可在运行中的 `/docs` 查看。
+
+## 配置参考
+
+配置从 `.env` 或进程环境变量读取，模板见 [.env.example](.env.example)。下表为未设置对应环境变量时的代码默认值。
+
+### 聊天模型与调查预算
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `OPENAI_API_KEY` | 无 | Agent 问答和图谱构建所需凭据 |
+| `OPENAI_BASE_URL` | SDK 默认地址 | OpenAI-compatible 服务地址 |
+| `MODEL_NAME` | `gpt-4.1-mini` | 聊天模型名称 |
+| `MODEL_THINKING_MODE` | 空，自动 | 支持 `enabled` / `disabled`、`on` / `off`、`true` / `false`、`auto` |
+| `MODEL_REQUEST_TIMEOUT_SECONDS` | `120` | 单次聊天请求超时，5–600 秒 |
+| `NOVEL_AGENT_TEMPERATURE` | `0` | 聊天模型温度 |
+| `NOVEL_AGENT_MAX_STEPS` | `16` | Web 默认调查步数，接口范围 1–100 |
+| `NOVEL_AGENT_STRUCTURED_RETRIES` | `2` | 首次结构化调用之外的格式重试次数，0–5 |
+
+指定思考模式时，Qwen 系列发送 `enable_thinking`，其他兼容接口发送 `thinking.type`；自动模式通常省略该参数，DeepSeek 模型默认关闭思考。结构化输出使用 function-calling，完整 JSON 文本通过目标 Schema 校验后也可接受。认证、余额、限流与网络异常不会当作格式错误反复重试。
+
+### Embedding
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `EMBEDDING_MODEL` | 空 | 留空仅使用 BM25，页面 Embedding 开关不可用 |
+| `EMBEDDING_API_KEY` | `OPENAI_API_KEY` | 可使用另一供应商的凭据 |
+| `EMBEDDING_BASE_URL` | `OPENAI_BASE_URL` | Embedding 服务地址 |
+| `EMBEDDING_REQUEST_TIMEOUT_SECONDS` | `30` | 单次请求超时，5–600 秒 |
+
+配置模型后，在当前小说信息栏开启 Embedding，才会为没有完整缓存的小说构建索引。正文以约 500 字的 Passage、每批最多 10 条发送，页面显示进度。开关按小说生效，同时影响 Agent 与文本检索，关闭开关保留缓存。
+
+服务启动或上传时若发现当前小说和模型对应的完整有效缓存，会自动加载并启用，不重复发送正文。查询编码有内存缓存。Embedding 消耗以请求数、文本数和字符数展示，不将字符数标为 token；同时记录缓存命中、失败、降级及最近 50 条事件。
+
+### 图谱构建与数据目录
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `NOVEL_AGENT_GRAPH_REQUEST_TIMEOUT_SECONDS` | `max(180, 聊天超时)` | 图谱请求超时，5–600 秒 |
+| `NOVEL_AGENT_GRAPH_REQUEST_RETRIES` | `1` | 小窗口及消歧请求超时后的额外尝试次数，0–3 |
+| `NOVEL_AGENT_GRAPH_MAX_OUTPUT_TOKENS` | `6144` | 图谱单次输出上限，512–16384 token |
+| `NOVEL_AGENT_DATA_DIR` | `output` | 小说、向量缓存、图谱和会话的数据根目录 |
+
+模板显式设置图谱超时为 180 秒；要使用随聊天超时变化的默认值，移除该覆盖项。调整图谱请求超时、超时重试与输出预算不会使已完成批次失效；正文、模型、抽取或归并规则变化会影响构建指纹。
+
+## 运行与故障恢复
+
+### 启动方式
+
+| 场景 | 命令与访问地址 |
+|---|---|
+| 前后端开发 | `python start_dev.py`；访问 `http://127.0.0.1:5173` |
+| 仅启动后端 | `python -m novel_agent` 或 `novel-agent`；API 位于 `http://127.0.0.1:8000` |
+| 单独启动前端 | 在 `frontend` 下运行 `npm run dev`，需另行启动后端 |
+
+开发脚本检查 8000 与 5173 端口；发现占用时显示进程并询问是否终止，只有输入 `y` 或 `yes` 才执行。脚本等待后端就绪后再启动 Vite，将 `/api` 代理到后端；后端启动最多等待 120 秒，失败时清理本次启动的进程。
+
+要由后端托管构建后的前端：
 
 ```powershell
 Set-Location frontend
 npm run build
 Set-Location ..
-novel-agent
+python -m novel_agent
 ```
 
-`novel-agent` 与 `python -m novel_agent` 等价。浏览器访问 <http://127.0.0.1:8000>，交互式 API 文档位于 <http://127.0.0.1:8000/docs>。如果未生成 `frontend/dist`，根路径会返回 503，此时应先构建前端或改用开发模式。
+访问 <http://127.0.0.1:8000>。后端从 `frontend/dist` 提供页面；未构建时根路径返回 503，API 仍可使用。
 
-### Web 图形化工作台
+### 任务恢复
 
-工作台提供：
-
-- 拖拽或选择 TXT，并查看编码、章节与 Chunk 概览。
-- 自动恢复已保存的小说，并在多本小说之间切换。
-- 新建、切换和删除按小说隔离的多轮会话；刷新页面后可恢复全部问答、证据、指标与事件，运行中的任务会自动重连。
-- 分页浏览识别出的章节结构。
-- 支持降级的 BM25/Embedding 混合检索与上下文展开。
-- 实时显示 Agent 节点图、调查计划、执行时间线、证据和最终答案。
-- 实时展示聊天模型 input/output/reasoning/cached token、分节点耗时，以及 Agent 和检索链路的异常、重试与降级记录。
-- 对超时、限流、网络和结构化输出等可恢复故障，可沿用原任务从失败节点手动重试；已完成节点、证据、时间线和用量统计不会丢失。恢复点只保存在当前服务进程内，服务重启后失效。
-- 在当前模型调用结束后的节点边界安全停止任务。
-
-当前实现只允许全局同时运行一个 Agent 任务；新任务会在已有任务结束、失败或取消后才能创建。上传文件必须为 `.txt`，单文件上限为 50 MiB。
-
-### 本地数据与外部请求
-
-- 上传的 TXT、Manifest、向量缓存与多轮会话分别保存在 `<NOVEL_AGENT_DATA_DIR>/novels`、`<NOVEL_AGENT_DATA_DIR>/indexes` 和 `<NOVEL_AGENT_DATA_DIR>/conversations`，这些目录默认位于 `output`，且已被 Git 忽略。
-- Agent 调查时，问题、任务摘要以及检索到的必要原文会发送给聊天模型服务；启用 Embedding 后，系统会将全部约 500 字的 Passage 分批发送给所配置的 Embedding 服务。
-- 每次 Agent 运行的 JSONL 节点轨迹写入 `output/traces/<run_id>.jsonl`。轨迹可能包含问题、工具参数、工具结果和模型输出，不应提交到版本库或公开分享。
-- `NOVEL_AGENT_DATA_DIR` 当前不改变轨迹目录；备份可恢复语料、向量缓存和已保存的会话历史。节点重试 checkpoint 仅存在于当前服务进程，服务重启时尚未结束的轮次会标记为中断且不可恢复。
-
-## 工具
-
-| 工具 | 作用 |
+| 任务 | 停止与恢复范围 |
 |---|---|
-| `get_book_structure(section_offset, section_limit)` | 查看结构总览；章节列表可选分页，每页最多 20 条 |
-| `search_novel(keyword, top_k)` | Passage 级 BM25/向量混合搜索，默认 3 条、最多 8 条 |
-| `read_context(chunk_id, before, after)` | 默认仅读取命中 Chunk，最多附带前后各 1 个 Chunk |
-| `read_section(section_id, start_chunk, limit)` | 默认读取 2 个 Chunk，最多 3 个 |
+| Agent 问答 | 当前模型调用结束后的节点边界停止；可恢复故障可在当前服务进程内从失败节点手动重试，保留计划、证据、事件和用量；重启后运行检查点失效 |
+| 图谱构建 | 检查点持久化到 SQLite，停止、失败或重启后可在指纹一致时手动继续 |
+| Embedding 构建 | 完整有效索引可跨进程加载；查询失败自动回退 BM25 |
 
-工具只读取本地数据，不修改小说文件。
+当前全局同时允许一个 Agent 问答任务，以及一个独立的图谱构建任务，两者模型消耗分别展示。小说、向量缓存、已发布图谱和会话历史可跨重启恢复；损坏的小说记录会被跳过，图谱不可用不阻断文本问答。
 
-## 状态中的关键字段
+## 数据存储与外部请求
 
-```text
-messages              LangChain 消息和工具结果
-plan                  结构化调查任务
-current_task_id       当前调查任务
-evidence              通过原文精确校验的证据
-hypotheses            可被修正或拒绝的解释假设
-unresolved_questions  尚未解决的问题
-tool_call_history     工具、参数、结果大小/状态和去重指纹
-review                最近一次证据审查结果
-step_count            已使用的调查步数
-termination_reason    结束原因
-token_usage           按节点汇总的 token 与模型耗时
-```
-
-默认预算用于避免 Agent 在单个调查项上无限深挖：
+默认数据布局如下；`NOVEL_AGENT_DATA_DIR` 可修改前四项的根目录：
 
 ```text
-单轮工具调用上限       2
-单任务调查轮次上限     2
-单任务证据上限         6
-全局 Replan 上限       2
+output/
+├── novels/<novel_id>/       原始 TXT 与版本化 Manifest
+├── indexes/                按正文哈希与模型区分的向量缓存
+├── knowledge_graph/        graph.sqlite3、版本、任务及检查点
+├── conversations/          会话、回答、证据、事件与指标
+└── traces/<run_id>.jsonl    Agent 运行轨迹，固定写入 output/traces
 ```
 
-当一个任务达到轮次上限时，有证据则以 `completed` 继续下一任务，没有证据则以 `blocked` 继续；最终 Writer 会明确披露未解决项。
+同一正文即使文件名或编码不同也复用已有小说。启动时校验正文哈希及相关索引。备份前先停止服务，再整体复制数据根目录，以包含 SQLite 及可能存在的 WAL/SHM 文件；自定义数据目录时，轨迹目录仍需单独保留。
 
-`messages` 用于模型上下文，`evidence` 和 `plan` 是显式业务状态。二者不能互相替代。
+| 操作 | 发送给外部模型服务的数据 |
+|---|---|
+| Agent 问答 | 问题、必要的会话上下文、任务摘要与工具返回的原文材料 |
+| 首次构建向量索引 | 全部正文 Passage，分批发送到 Embedding 服务 |
+| 向量查询 | 未命中查询缓存的搜索词 |
+| 构建知识图谱 | 抽取窗口正文、上下文及身份消歧材料 |
 
-## 测试
+本地 BM25、原文读取和已发布图谱查询均不调用外部模型。数据目录和轨迹默认被 Git 忽略；轨迹可能包含问题、工具参数、原文和模型输出，分享前需检查。诊断事件不向浏览器返回凭据或供应商原始异常正文。
 
-```powershell
-python -X utf8 -m pytest
+## 开发与验证
 
-Set-Location frontend
-npm test
-npm run build
-```
-
-测试覆盖：
-
-- 常见中文编码。
-- 多类章节标题和混合标题。
-- 无标题降级切分。
-- 正文编号列表误判保护。
-- 超长自然段切分。
-- 搜索、上下文读取和原文引文校验。
-- 小说持久化、正文去重、启动恢复和跨进程向量缓存复用。
-- LangGraph 条件路由、Assessor 合并节点与简单问题快速路径。
-- 使用脚本模型执行完整工具循环。
-- DeepSeek 默认 Thinking mode 配置和模型 usage 元数据汇总。
-
-测试 Fixture 在运行时动态生成，不包含小说原文。
-
-## 项目结构
+### 项目结构
 
 ```text
 src/novel_agent/
-├── agent/                 LangGraph 节点、状态、路由、Prompt、Schema 与 Tool
-├── application/           Web 共用的 Agent 执行服务
-├── corpus/                文本加载、结构识别、切分、模型与本地查询
-├── runtime/               模型配置、结构化输出与运行诊断
-├── web/                   FastAPI、上传缓存、任务管理、事件映射与 SSE
-├── __init__.py            精简的公开 Python API
-└── __main__.py            Web 工作台启动入口
+├── agent/                  LangGraph 节点、状态、路由、提示词与工具
+├── application/            Agent 执行服务、回调与诊断汇总
+├── corpus/
+│   ├── retrieval/          Passage、BM25、Embedding 与 RRF
+│   └── knowledge_graph/    抽取、实体归并、SQLite 存储与图查询
+├── runtime/                模型配置、结构化输出与用量跟踪
+├── web/                    FastAPI、存储、任务管理与 SSE
+└── __main__.py             后端启动入口
 
-frontend/                  Vue 3 + TypeScript 单页工作台
-start_dev.py               跨平台的一键开发启动脚本
-tests/                     按上述职责镜像组织的后端测试
+frontend/                   Vue 3 + TypeScript 工作台，图谱使用 Cytoscape
+tests/                      后端测试
+scripts/                    图谱性能与质量评估
+docs/                       设计、验证与专题记录
+start_dev.py                跨平台开发启动脚本
 ```
 
-## 系统边界与设计取舍
+### 回归与专项评估
 
-- 无编号标题具有天然歧义，无法保证完全自动识别；系统会在置信度不足时优先采用安全的段落切分策略。
-- 未启用 Embedding 时仅使用 BM25 关键词召回；启用后才具备语义召回能力，并在服务异常时自动降级。
-- Agent 运行恢复点使用 In-memory Checkpointer，仅在当前服务进程内有效；小说与检索索引可跨进程持久化恢复。
-- 工作台中的 token、耗时和步骤统计用于运行观测，不等同于答案质量评分。
-- 工具调用与结构化输出的稳定性仍受所选模型及 OpenAI-compatible 服务实现质量影响。
+```powershell
+python -X utf8 -m pytest
+Set-Location frontend
+npm test
+npm run build
+Set-Location ..
+```
+
+测试覆盖文本编码与章节识别、检索与降级、引文校验、持久化恢复、Agent 工具循环、图谱构建与查询、多名称归并及同名消歧。自动化测试使用临时数据和模拟模型，不代表真实供应商的抽取准确率。
+
+```powershell
+# 本地合成图查询性能：一万节点、五万条边，不调用模型
+python -X utf8 scripts/benchmark_knowledge_graph.py --iterations 100
+
+# 检查评估集规模：20 个身份案例、30 条关系，不调用模型
+python -X utf8 scripts/evaluate_knowledge_graph.py
+
+# 使用当前模型执行质量评估，会发送测试文本并产生模型用量
+python -X utf8 scripts/evaluate_knowledge_graph.py --run-model
+```
+
+性能库与报告保存在 `tmp/graph-benchmark-*`，模型质量报告保存在 `tmp/graph-quality-*`。实际抽取质量、全书耗时和消耗需结合正文与模型评估。
+
+### 进一步阅读
+
+- [图知识库需求与范围](docs/novel-knowledge-graph-requirements.md)
+- [图知识库技术设计与接口](docs/novel-knowledge-graph-design.md)
+- [图知识库验证与性能记录](docs/novel-knowledge-graph-validation.md)
+- [Agent Token 优化实施总结](docs/token-optimization-summary.md)
+- [Writer 结构化输出故障复盘](docs/2026-10-08-writer-structured-output-failure.md)
+
+## 能力边界
+
+- 支持常见编码与多种章节标题；无编号标题仍有歧义，低置信度时按段落和长度降级切分，所有正文块保留原文位置。
+- 引文逐字校验保证引文存在于原文；事实解释、人物身份与关系语义仍需结合证据审查，模型可能遗漏或误判。
+- 图谱按小说隔离，当前仅支持单后端进程，不提供跨书图谱、人工纠错界面或自动剧情时点判断。章节范围表示证据位置，不等于剧情发生时间。
+- 多跳路径只提供调查线索；否认关系和人物说法不能直接写成确定事实，未找到关系也不能证明关系不存在。
+- 模型调用和结构化输出的稳定性受服务商实现影响；token、耗时、缓存命中与步骤统计用于运行观测，不等同于答案质量评分。

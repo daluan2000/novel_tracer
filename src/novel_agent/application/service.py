@@ -69,6 +69,7 @@ def execute_agent(
     resume: bool = False,
     telemetry: ExecutionTelemetry | None = None,
     conversation_history: list[dict[str, str]] | None = None,
+    graph_reader: Any = None,
 ) -> AgentExecutionResult:
     """执行一次 Agent 图，并把节点级事件暴露给 Web 层。
 
@@ -93,6 +94,7 @@ def execute_agent(
         """把回调在图外统计的指标投影到对外可见状态。"""
 
         enriched = dict(state)
+        enriched["graph_version"] = graph_reader.graph_version if graph_reader else None
         enriched["structured_retry_count"] = execution_telemetry.structured_retry_count
         enriched["content_fallback_count"] = execution_telemetry.content_fallback_count
         enriched["model_call_count"] = execution_telemetry.model_call_count
@@ -125,7 +127,7 @@ def execute_agent(
     # 直接读取文件系统。
     graph = build_agent_graph(
         model=active_model,
-        tools=build_tools(corpus),
+        tools=build_tools(corpus, graph_reader=graph_reader),
         corpus=corpus,
         structured_retries=structured_retries,
         on_diagnostic=handle_diagnostic,
