@@ -27,6 +27,31 @@ beforeEach(() => {
 })
 
 describe('KnowledgeGraphPanel', () => {
+  it('shows concurrency, separate wall/model times, and readable rate-limit retries', async () => {
+    vi.mocked(graphApi.status).mockResolvedValue({ ...status,
+      extraction_concurrency: 4, resolution_concurrency: 4, rate_limit_retries: 3,
+      job: {
+        job_id: 'j', graph_version: 'v1', status: 'completed', phase: 'publishing', stop_requested: false,
+        can_resume: false, error_code: null, extraction: { completed: 8, total: 8 },
+        resolution: { completed: 16, total: 16 }, entity_count: 4, relation_count: 2, elapsed_seconds: 10,
+        phase_elapsed_seconds: { extracting: 3.2, resolving: 6.5 },
+        phase_model_seconds: { extracting: 12.1, resolving: 23.4 },
+        usage: { request_count: 20, reported_input_tokens: 100, reported_output_tokens: 100,
+          unknown_request_count: 0, failed_request_count: 1 },
+        events: [{ code: 'graph_model_rate_limit_retry', level: 'warning', created_at: '' }],
+      },
+    })
+    const wrapper = mount(KnowledgeGraphPanel, { props: { novel }, global: { stubs: { KnowledgeGraphCanvas: true } } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('抽取最多 4 路并发')
+    expect(wrapper.text()).toContain('阶段累计耗时：')
+    expect(wrapper.text()).toContain('3.2 秒')
+    expect(wrapper.text()).toContain('12.1 秒')
+    expect(wrapper.text()).toContain('并发时可大于实际耗时')
+    expect(wrapper.text()).toContain('正在等待后重试')
+    expect(wrapper.text()).not.toContain('graph_model_rate_limit_retry')
+    wrapper.unmount()
+  })
   it('shows all aliases in search candidates and selected entities for both path endpoints', async () => {
     const monkey: GraphNode = { id: 'monkey', name: '孙悟空', type: 'person', aliases: ['悟空', '孙大圣', '齐天大圣'] }
     vi.mocked(graphApi.search).mockResolvedValue({ ...result, items: [monkey], offset: 0, limit: 20, total: 1 })

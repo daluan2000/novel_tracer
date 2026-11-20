@@ -37,6 +37,7 @@ const eventLabels: Record<string, string> = {
   graph_structured_output_failed: '模型结构化结果重试耗尽，构建已停止',
   structured_output_failed: '模型结果仍未通过结构校验',
   graph_model_timeout_retry: '模型请求超时，正在有限重试',
+  graph_model_rate_limit_retry: '模型请求受到限流，正在等待后重试',
   graph_extraction_timeout_split: '超时片段已拆为较小片段',
   graph_extraction_output_split: '模型输出达到上限，已自动缩小片段',
   graph_extraction_compact_fallback: '已切换为精简抽取，使用片段编号引用原文',
@@ -164,6 +165,7 @@ onBeforeUnmount(() => { disposed = true; chapterSequence++; evidenceSequence++; 
       <p>{{ status.model_name || '聊天模型未配置' }} · {{ status.source_characters.toLocaleString() }} 字 · 预计 {{ status.estimated_extraction_units }} 个抽取批次</p>
       <details class="graph-build-options"><summary>构建说明与参数</summary>
       <p v-if="status.max_output_tokens" class="graph-notice">单次输出最多 {{ status.max_output_tokens }} token · 请求超时上限 {{ status.request_timeout_seconds }} 秒。较大片段超时或输出达到上限时自动拆分；其他超时最多额外重试 {{ status.timeout_retries }} 次。</p>
+      <p v-if="status.extraction_concurrency" class="graph-notice">抽取最多 {{ status.extraction_concurrency }} 路并发 · 消歧最多 {{ status.resolution_concurrency }} 路并发；限流后最多额外重试 {{ status.rate_limit_retries }} 次。</p>
       <p class="graph-notice">点击构建或重建会将全书正文分批发送给已配置的聊天模型，并产生模型用量。重建期间原图谱仍可使用。</p>
       </details>
       <p v-if="status.error_code" role="alert">图谱暂不可用（{{ status.error_code }}），仍可使用文本检索。</p>
@@ -172,6 +174,9 @@ onBeforeUnmount(() => { disposed = true; chapterSequence++; evidenceSequence++; 
       <div class="graph-progress" aria-live="polite">
         <strong>{{ states[status.job.status] }} · {{ phases[status.job.phase] }}</strong>
         <span>抽取 {{ status.job.extraction.completed }}/{{ status.job.extraction.total }} · 消歧 {{ status.job.resolution.completed }}/{{ status.job.resolution.total }} · {{ status.job.elapsed_seconds.toFixed(1) }} 秒</span>
+        <small v-if="status.job.phase_elapsed_seconds && Object.keys(status.job.phase_elapsed_seconds).length">阶段累计耗时：<template v-for="(seconds, phase) in status.job.phase_elapsed_seconds" :key="phase">{{ phases[phase] }} {{ seconds?.toFixed(1) }} 秒；</template></small>
+        <small v-else>历史阶段耗时未知。</small>
+        <small v-if="status.job.phase_model_seconds && Object.keys(status.job.phase_model_seconds).length">模型请求累计耗时：<template v-for="(seconds, phase) in status.job.phase_model_seconds" :key="phase">{{ phases[phase] }} {{ seconds?.toFixed(1) }} 秒；</template>并发时可大于实际耗时。</small>
         <small v-if="status.job.extraction.cached">另有 {{ status.job.extraction.cached }} 批成功返回的候选已缓存，继续处理可复用。</small>
         <small>批次可能按文本密度细分；只有发布完成才表示全流程完成。</small>
         <span>{{ status.job.usage.request_count }} 次模型请求 · 已报告输入 {{ status.job.usage.reported_input_tokens }} / 输出 {{ status.job.usage.reported_output_tokens }} token<span v-if="status.job.usage.unknown_request_count"> · {{ status.job.usage.unknown_request_count }} 次请求用量未知</span></span>

@@ -205,3 +205,25 @@ def graph_max_output_tokens() -> int:
     if not 512 <= value <= 16384:
         raise RuntimeError("NOVEL_AGENT_GRAPH_MAX_OUTPUT_TOKENS 必须是 512 到 16384 之间的整数。")
     return value
+
+
+def _graph_integer(name: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)).strip())
+    except ValueError as exc:
+        raise RuntimeError(f"{name} 必须是 {minimum} 到 {maximum} 之间的整数。") from exc
+    if not minimum <= value <= maximum:
+        raise RuntimeError(f"{name} 必须是 {minimum} 到 {maximum} 之间的整数。")
+    return value
+
+
+def graph_extraction_concurrency() -> int:
+    return _graph_integer("NOVEL_AGENT_GRAPH_EXTRACTION_CONCURRENCY", 4, 1, 16)
+
+
+def graph_resolution_concurrency() -> int:
+    return _graph_integer("NOVEL_AGENT_GRAPH_RESOLUTION_CONCURRENCY", 4, 1, 16)
+
+
+def graph_rate_limit_retries() -> int:
+    return _graph_integer("NOVEL_AGENT_GRAPH_RATE_LIMIT_RETRIES", 3, 0, 5)

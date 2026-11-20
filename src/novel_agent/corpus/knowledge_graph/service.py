@@ -2,22 +2,29 @@ from __future__ import annotations
 
 import json
 import logging
+import math
+import random
 import sqlite3
 import threading
 import time
 import uuid
 import traceback
 from dataclasses import replace
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Callable
 from urllib.parse import urlsplit, urlunsplit
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from novel_agent.runtime.config import ModelConfig, structured_output_retries, graph_request_timeout_seconds, graph_request_retries, graph_max_output_tokens
+from novel_agent.runtime.config import (ModelConfig, structured_output_retries, graph_request_timeout_seconds,
+    graph_request_retries, graph_max_output_tokens, graph_extraction_concurrency,
+    graph_resolution_concurrency, graph_rate_limit_retries)
 from novel_agent.runtime.structured_output import invoke_structured
 from .extraction import (EXTRACTION_PROMPT, COMPACT_EXTRACTION_PROMPT, validate_batch,
     validate_compact_batch, core_candidate_counts, compact_window, windows, split_window)
+from .concurrency import BuildStopped, parallel_map
 from .models import ExtractionBatch, CompactExtractionBatch, GraphError, GraphOutputLimitError, ResolutionDecision
 from .ontology import PARSER_VERSION, RULE_VERSION, digest, ontology_payload
 from .output_contracts import output_contract
@@ -29,8 +36,32 @@ LOGGER = logging.getLogger(__name__)
 ACTIVE = {"queued", "building", "stopping"}
 
 
-class BuildStopped(Exception):
-    pass
+def rate_limit_delay(error: BaseException, retry: int) -> float | None:
+    seen = set()
+    while error is not None and id(error) not in seen:
+        seen.add(id(error))
+        response = getattr(error, "response", None)
+        if (getattr(error, "status_code", None) == 429
+                or getattr(response, "status_code", None) == 429
+                or "ratelimit" in type(error).__name__.lower()):
+            headers = getattr(response, "headers", None) or getattr(error, "headers", None) or {}
+            raw = headers.get("retry-after") or headers.get("Retry-After")
+            if raw is not None:
+                try:
+                    seconds = float(raw)
+                except (ValueError, TypeError):
+                    try:
+                        date = parsedate_to_datetime(raw)
+                        if date.tzinfo is None:
+                            date = date.replace(tzinfo=timezone.utc)
+                        seconds = (date - datetime.now(timezone.utc)).total_seconds()
+                    except (ValueError, TypeError, OverflowError):
+                        seconds = -1
+                if math.isfinite(seconds) and seconds >= 0:
+                    return seconds
+            return min(2 ** retry, 30) + random.uniform(0, 1)
+        error = error.__cause__ or error.__context__
+    return None
 
 
 def is_model_timeout(error: BaseException) -> bool:
@@ -82,6 +113,10 @@ class KnowledgeGraphService:
         self.wake, self.shutdown = threading.Event(), threading.Event()
         self.worker = None
         self.running_since: tuple[str, float, float] | None = None
+        self.phase_since: tuple[str, str, float] | None = None
+        self.abort = threading.Event()
+        self.cooldown_lock = threading.Lock()
+        self.cooldown_until = 0.0
 
     def open(self):
         try:
@@ -118,6 +153,9 @@ class KnowledgeGraphService:
             graph_request_timeout_seconds(config.request_timeout_seconds)
             graph_request_retries()
             graph_max_output_tokens()
+            graph_extraction_concurrency()
+            graph_resolution_concurrency()
+            graph_rate_limit_retries()
             return config
         except (ValueError, RuntimeError) as exc:
             raise GraphError("graph_model_not_configured", "请先配置有效的聊天模型。") from exc
@@ -141,6 +179,9 @@ class KnowledgeGraphService:
                   "request_timeout_seconds": graph_request_timeout_seconds(config.request_timeout_seconds) if config else None,
                   "timeout_retries": graph_request_retries() if config else None,
                   "max_output_tokens": graph_max_output_tokens() if config else None,
+                  "extraction_concurrency": graph_extraction_concurrency() if config else None,
+                  "resolution_concurrency": graph_resolution_concurrency() if config else None,
+                  "rate_limit_retries": graph_rate_limit_retries() if config else None,
                   "ontology": ontology_payload()}
         if self.error_code:
             return result
@@ -167,10 +208,13 @@ class KnowledgeGraphService:
         with self.storage.connect() as db:
             units = db.execute("SELECT kind,status,COUNT(*) n FROM graph_units WHERE version=? GROUP BY kind,status", (version,)).fetchall()
             counts = {(u["kind"], u["status"]): u["n"] for u in units}
-            attempts = db.execute("SELECT status,usage_json FROM graph_attempts WHERE version=?", (version,)).fetchall()
+            attempts = db.execute("SELECT unit_id,status,usage_json,elapsed_ms FROM graph_attempts WHERE version=?", (version,)).fetchall()
+            model_seconds = {}
             usage = {"request_count": len(attempts), "reported_input_tokens": 0, "reported_output_tokens": 0,
                      "unknown_request_count": 0, "failed_request_count": 0}
             for a in attempts:
+                phase = "extracting" if a["unit_id"].startswith("extract:") else "resolving"
+                model_seconds[phase] = model_seconds.get(phase, 0) + (a["elapsed_ms"] or 0) / 1000
                 u = json.loads(a["usage_json"]) if a["usage_json"] else {}
                 usage["reported_input_tokens"] += u.get("input_tokens") or 0
                 usage["reported_output_tokens"] += u.get("output_tokens") or 0
@@ -189,11 +233,16 @@ class KnowledgeGraphService:
         clock = self.running_since
         if clock and clock[0] == job["job_id"]:
             elapsed = clock[2] + time.monotonic() - clock[1]
+        phase_seconds = self.storage.phase_times(job["job_id"])
+        phase_clock = self.phase_since
+        if phase_clock and phase_clock[0] == job["job_id"]:
+            phase_seconds[phase_clock[1]] = phase_seconds.get(phase_clock[1], 0) + time.monotonic() - phase_clock[2]
         return {"job_id": job["job_id"], "graph_version": version, "status": job["status"], "phase": job["phase"],
                 "stop_requested": bool(job["stop_requested"]), "extraction": progress("extract"),
                 "resolution": progress("resolve"), "entity_count": totals.get("entity_count", 0),
                 "relation_count": totals.get("relation_count", 0), "usage": usage,
                 "elapsed_seconds": elapsed, "error_code": job["error_code"], "events": events,
+                "phase_elapsed_seconds": phase_seconds, "phase_model_seconds": model_seconds,
                 "can_resume": bool(job["status"] in {"failed", "stopped"} and config and item
                                    and version_row["fingerprint"] == self._fingerprint(item, config))}
 
@@ -273,13 +322,41 @@ class KnowledgeGraphService:
 
     def _check_stop(self, job):
         latest = self.storage.job(job["novel_id"], job["job_id"])
-        if self.shutdown.is_set() or latest["stop_requested"]:
+        if self.shutdown.is_set() or self.abort.is_set() or latest["stop_requested"]:
             raise BuildStopped()
 
     def _wait_for_retry(self, job, seconds):
-        if self.shutdown.wait(seconds):
-            raise BuildStopped()
-        self._check_stop(job)
+        deadline = time.monotonic() + seconds
+        while True:
+            self._check_stop(job)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            if self.shutdown.wait(min(remaining, 0.1)):
+                raise BuildStopped()
+
+    def _wait_for_cooldown(self, job):
+        while True:
+            self._check_stop(job)
+            with self.cooldown_lock:
+                remaining = self.cooldown_until - time.monotonic()
+            if remaining <= 0:
+                return
+            self._wait_for_retry(job, remaining)
+
+    def _finish_phase(self):
+        with self.lock:
+            clock = self.phase_since
+            if clock:
+                self.storage.add_phase_time(clock[0], clock[1], time.monotonic() - clock[2])
+                self.phase_since = None
+
+    def _set_phase(self, job, phase):
+        with self.lock:
+            self._finish_phase()
+            self.storage.update_job(job["job_id"], phase=phase)
+            job["phase"] = phase
+            self.phase_since = (job["job_id"], phase, time.monotonic())
 
     def _invoke(self, job, model, unit_id, schema, prompt, payload, *, timeout_retries=None):
         self._check_stop(job)
@@ -287,8 +364,10 @@ class KnowledgeGraphService:
         retries = graph_request_retries() if timeout_retries is None else timeout_retries
         class TrackedRunnable:
             def invoke(self, messages):
-                for retry in range(retries + 1):
+                timeout_attempts, rate_attempts = 0, 0
+                while True:
                     service._check_stop(job)
+                    service._wait_for_cooldown(job)
                     attempt = uuid.uuid4().hex
                     service.storage.start_attempt(attempt, job["version"], unit_id)
                     started = time.monotonic()
@@ -296,15 +375,25 @@ class KnowledgeGraphService:
                         response = runnable.invoke(messages)
                     except Exception as exc:
                         timed_out = is_model_timeout(exc)
+                        delay = rate_limit_delay(exc, rate_attempts)
                         service.storage.finish_attempt(attempt, (time.monotonic() - started) * 1000,
-                            error_code="graph_model_timeout" if timed_out else "graph_model_output_limit" if is_output_limit(exc) else "model_request_failed")
+                            error_code="graph_model_rate_limited" if delay is not None else "graph_model_timeout" if timed_out else "graph_model_output_limit" if is_output_limit(exc) else "model_request_failed")
                         service._check_stop(job)
+                        if delay is not None:
+                            with service.cooldown_lock:
+                                service.cooldown_until = max(service.cooldown_until, time.monotonic() + delay)
+                            if rate_attempts >= graph_rate_limit_retries():
+                                raise GraphError("graph_model_rate_limited", "模型请求持续受到限流，已保存进度。") from exc
+                            rate_attempts += 1
+                            service.storage.event(job["job_id"], "graph_model_rate_limit_retry", "warning")
+                            continue
                         if is_output_limit(exc):
                             raise GraphOutputLimitError() from exc
-                        if not timed_out or retry == retries:
+                        if not timed_out or timeout_attempts >= retries:
                             raise
                         service.storage.event(job["job_id"], "graph_model_timeout_retry", "warning")
-                        service._wait_for_retry(job, min(2 ** retry, 4))
+                        service._wait_for_retry(job, min(2 ** timeout_attempts, 4))
+                        timeout_attempts += 1
                         continue
                     from novel_agent.runtime.tracing import model_usage_event
                     usage = model_usage_event(response, "graph_" + job["phase"], time.monotonic() - started)
@@ -325,9 +414,18 @@ class KnowledgeGraphService:
         request_prompt = prompt + "\n\n" + contract if contract else prompt
         return invoke_structured(TrackedRunnable(), [SystemMessage(content=request_prompt), HumanMessage(content=encode(payload))], schema,
             source_node="graph_" + job["phase"], retries=structured_output_retries(),
-            on_diagnostic=diagnostic).value
+            on_diagnostic=diagnostic, sleeper=lambda seconds: self._wait_for_retry(job, seconds)).value
 
     def _run(self, job):
+        self.abort.clear()
+        with self.cooldown_lock:
+            self.cooldown_until = 0.0
+        try:
+            self._run_job(job)
+        finally:
+            self._finish_phase()
+
+    def _run_job(self, job):
         started = time.monotonic()
         item = self.novels.get(job["novel_id"])
         corpus = item.corpus
@@ -337,12 +435,21 @@ class KnowledgeGraphService:
         if expected != self._fingerprint(item, config):
             raise GraphError("graph_fingerprint_changed", "配置已变化，请重建。")
         graph_config = replace(config, request_timeout_seconds=graph_request_timeout_seconds(config.request_timeout_seconds))
-        model = self.model_factory() if self.model_factory else graph_config.create_model(max_retries=0, max_tokens=graph_max_output_tokens())
-        batches = []
+        local = threading.local()
+
+        def get_model():
+            if not hasattr(local, "model"):
+                local.model = self.model_factory() if self.model_factory else graph_config.create_model(
+                    max_retries=0, max_tokens=graph_max_output_tokens())
+            return local.model
+
+        compact = threading.Event()
         with self.storage.connect() as db:
-            prefer_compact = bool(db.execute("SELECT 1 FROM graph_attempts WHERE version=? AND error_code='graph_model_output_limit' LIMIT 1", (job["version"],)).fetchone())
+            had_output_limit = bool(db.execute("SELECT 1 FROM graph_attempts WHERE version=? AND error_code='graph_model_output_limit' LIMIT 1", (job["version"],)).fetchone())
             compact_event = db.execute("SELECT 1 FROM graph_events WHERE job_id=? AND code='graph_extraction_compact_fallback' LIMIT 1", (job["job_id"],)).fetchone()
-        if prefer_compact and not compact_event:
+        if had_output_limit:
+            compact.set()
+        if had_output_limit and not compact_event:
             self.storage.event(job["job_id"], "graph_extraction_compact_fallback", "warning")
         def split_extract(w, sequence, reason, min_chars=500, candidate_counts=None):
             children = split_window(corpus, w, min_chars=min_chars)
@@ -354,11 +461,10 @@ class KnowledgeGraphService:
                 extract(child, sequence)
 
         def extract(w, sequence):
-            nonlocal prefer_compact
             self._check_stop(job)
             saved = self.storage.unit(job["version"], w.unit_id)
             if saved and saved["status"] == "completed":
-                batches.append(saved["result"])
+                local.batches.append(saved["result"])
                 return
             if saved and saved["status"] == "split":
                 for child in split_window(corpus, w, min_chars=saved["result"].get("split_min_chars", 500)):
@@ -371,8 +477,8 @@ class KnowledgeGraphService:
                 raise GraphError("graph_checkpoint_invalid", "已缓存的候选结构不兼容，请检查图谱数据。")
             previous_error = saved["result"].get("last_error_code") if saved else None
             if previous_error == "graph_model_output_limit":
-                prefer_compact = True
-            use_compact = cached.get("format") == "compact-v1" if cached is not None else prefer_compact
+                compact.set()
+            use_compact = cached.get("format") == "compact-v1" if cached is not None else compact.is_set()
             minimum = 200 if use_compact else 500
             can_split = w.end - w.start >= minimum * 2
             if cached is None and can_split and previous_error == "graph_model_timeout":
@@ -389,7 +495,7 @@ class KnowledgeGraphService:
                     except (KeyError, ValueError, TypeError) as exc:
                         raise GraphError("graph_checkpoint_invalid", "已缓存的候选结构不兼容，请检查图谱数据。") from exc
                 else:
-                    batch = self._invoke(job, model, w.unit_id, schema,
+                    batch = self._invoke(job, get_model(), w.unit_id, schema,
                         COMPACT_EXTRACTION_PROMPT if use_compact else EXTRACTION_PROMPT, payload,
                         timeout_retries=0 if can_split else None)
                     # Keep the successfully parsed response before any local validation,
@@ -403,7 +509,7 @@ class KnowledgeGraphService:
                     raise
                 self._check_stop(job)
                 if is_output_limit(exc):
-                    prefer_compact = True
+                    compact.set()
                     if not use_compact:
                         self.storage.event(job["job_id"], "graph_extraction_compact_fallback", "warning")
                         if w.end - w.start >= 1000:
@@ -447,15 +553,19 @@ class KnowledgeGraphService:
             for kind, count in result["rejected"].items():
                 if count:
                     self.storage.event(job["job_id"], f"rejected_{kind}:{count}", "warning")
-            batches.append(result)
-            self.storage.update_job(job["job_id"], elapsed_seconds=job["elapsed_seconds"] + time.monotonic() - started)
-        self.storage.update_job(job["job_id"], phase="extracting")
-        job["phase"] = "extracting"
-        for sequence, window in enumerate(windows(corpus)):
+            local.batches.append(result)
+        def extract_root(item):
+            sequence, window = item
+            local.batches = []
             extract(window, sequence)
+            return local.batches
+
+        self._set_phase(job, "extracting")
+        root_results = parallel_map(extract_root, enumerate(windows(corpus)), graph_extraction_concurrency(),
+                                    check=lambda: self._check_stop(job), on_error=self.abort.set)
+        batches = [batch for results in root_results for batch in results]
         self._check_stop(job)
-        job["phase"] = "resolving"
-        self.storage.update_job(job["job_id"], phase="resolving")
+        self._set_phase(job, "resolving")
         total = sum(len(b["entities"]) for b in batches)
         for sequence in range(total):
             uid = f"resolve:{sequence}"
@@ -476,16 +586,18 @@ class KnowledgeGraphService:
                     raise ValueError("resolution_checkpoint_changed")
                 return saved["result"]
         entities, relations = resolve(batches, job["version"],
-            lambda uid, schema, prompt, payload: self._invoke(job, model, uid, schema, prompt, payload),
-            checkpoint, lambda code: self.storage.event(job["job_id"], code, "warning"))
+            lambda uid, schema, prompt, payload: self._invoke(job, get_model(), uid, schema, prompt, payload),
+            checkpoint, lambda code: self.storage.event(job["job_id"], code, "warning"),
+            concurrency=graph_resolution_concurrency(), check=lambda: self._check_stop(job), on_error=self.abort.set)
         self._check_stop(job)
-        self.storage.update_job(job["job_id"], phase="materializing")
+        self._set_phase(job, "materializing")
         self.storage.materialize(job["version"], entities, relations)
         with self.lock:
             self._check_stop(job)
             if source_identity(item) != json.loads(self._version_source(job["version"])):
                 raise ValueError("graph_source_changed")
-            self.storage.update_job(job["job_id"], phase="publishing", elapsed_seconds=job["elapsed_seconds"] + time.monotonic() - started)
+            self._set_phase(job, "publishing")
+            self.storage.update_job(job["job_id"], elapsed_seconds=job["elapsed_seconds"] + time.monotonic() - started)
             if not self.storage.publish(job["novel_id"], job["version"], job["job_id"]):
                 raise BuildStopped()
 
@@ -518,8 +630,13 @@ class KnowledgeGraphService:
                             "graph_model_rate_limited" if "ratelimit" in error_type else
                             "graph_model_connection_failed" if "connection" in error_type else
                             "graph_structured_output_failed" if "structuredoutput" in error_type else "graph_build_failed")
-                        self.storage.update_job(job["job_id"], status="failed", error_code=code)
-                        self.storage.event(job["job_id"], code, "error")
+                        latest = self.storage.job(job["novel_id"], job["job_id"])
+                        if self.shutdown.is_set() or latest["stop_requested"]:
+                            self.storage.update_job(job["job_id"], status="stopped",
+                                error_code="service_interrupted" if self.shutdown.is_set() else None)
+                        else:
+                            self.storage.update_job(job["job_id"], status="failed", error_code=code)
+                            self.storage.event(job["job_id"], code, "error")
                         frames, seen, failure = [], set(), exc
                         while failure is not None and id(failure) not in seen:
                             seen.add(id(failure))

@@ -34,7 +34,12 @@ def retry_busy(operation):
     return wrapped
 
 
+PHASE_SCHEMA = """CREATE TABLE graph_phase_timings (
+ job_id TEXT NOT NULL REFERENCES graph_jobs(job_id), phase TEXT NOT NULL,
+ elapsed_seconds REAL NOT NULL DEFAULT 0, PRIMARY KEY(job_id,phase))"""
+
 SCHEMA = """
+BEGIN IMMEDIATE;
 CREATE TABLE graph_versions (
  version TEXT PRIMARY KEY, novel_id TEXT NOT NULL, state TEXT NOT NULL,
  fingerprint TEXT NOT NULL, source_identity TEXT NOT NULL, model_identity TEXT NOT NULL,
@@ -98,8 +103,7 @@ CREATE TABLE graph_evidence_spans (
  section_order INTEGER NOT NULL, payload TEXT NOT NULL,
  PRIMARY KEY(version,group_id,span_index),
  FOREIGN KEY(version,group_id) REFERENCES graph_evidence_groups(version,group_id) ON DELETE CASCADE);
-PRAGMA user_version=1;
-"""
+""" + PHASE_SCHEMA + ";\nPRAGMA user_version=2;\nCOMMIT;\n"
 
 
 class GraphStorage:
@@ -143,7 +147,11 @@ class GraphStorage:
             version = db.execute("PRAGMA user_version").fetchone()[0]
             if version == 0:
                 db.executescript(SCHEMA)
-            elif version != 1:
+            elif version == 1:
+                db.execute("BEGIN IMMEDIATE")
+                db.execute(PHASE_SCHEMA)
+                db.execute("PRAGMA user_version=2")
+            elif version != 2:
                 raise GraphError("graph_storage_unavailable", "图谱数据库版本不兼容。", 503)
             if db.execute("PRAGMA quick_check").fetchone()[0] != "ok" or db.execute("PRAGMA foreign_key_check").fetchone():
                 raise GraphError("graph_storage_unavailable", "图谱数据库校验失败。", 503)
@@ -172,6 +180,18 @@ class GraphStorage:
                 params.append(job_id)
             row = db.execute(sql + " ORDER BY created_at DESC, rowid DESC LIMIT 1", params).fetchone()
             return dict(row) if row else None
+
+    @retry_busy
+    def add_phase_time(self, job_id: str, phase: str, seconds: float):
+        with self.connect() as db:
+            db.execute("INSERT INTO graph_phase_timings VALUES(?,?,?) "
+                       "ON CONFLICT(job_id,phase) DO UPDATE SET elapsed_seconds=elapsed_seconds+excluded.elapsed_seconds",
+                       (job_id, phase, seconds))
+
+    def phase_times(self, job_id: str) -> dict[str, float]:
+        with self.connect() as db:
+            return {row["phase"]: row["elapsed_seconds"] for row in db.execute(
+                "SELECT phase,elapsed_seconds FROM graph_phase_timings WHERE job_id=?", (job_id,))}
 
     @retry_busy
     def update_job(self, job_id: str, **fields):

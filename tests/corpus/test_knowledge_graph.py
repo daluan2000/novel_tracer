@@ -130,6 +130,7 @@ def test_build_query_alias_evidence_and_agent_tools(tmp_path, monkeypatch):
 
 
 def test_failed_build_resume_checkpoint_and_restart(tmp_path, monkeypatch):
+    monkeypatch.setenv("NOVEL_AGENT_GRAPH_EXTRACTION_CONCURRENCY", "1")
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setenv("NOVEL_AGENT_GRAPH_REQUEST_RETRIES", "0")
     model = ScriptModel()
@@ -159,6 +160,7 @@ def test_failed_build_resume_checkpoint_and_restart(tmp_path, monkeypatch):
 
 
 def test_stop_saves_current_batch_and_duplicate_does_not_enqueue(tmp_path, monkeypatch):
+    monkeypatch.setenv("NOVEL_AGENT_GRAPH_EXTRACTION_CONCURRENCY", "1")
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     model = ScriptModel()
     model.release = threading.Event()

@@ -28,6 +28,8 @@ export interface GraphJob {
   stop_requested: boolean; can_resume: boolean; error_code: string | null
   extraction: { completed: number; total: number; cached?: number }; resolution: { completed: number; total: number }
   entity_count: number; relation_count: number; elapsed_seconds: number
+  phase_elapsed_seconds?: Partial<Record<GraphJob['phase'], number>>
+  phase_model_seconds?: Partial<Record<GraphJob['phase'], number>>
   usage: { request_count: number; reported_input_tokens: number; reported_output_tokens: number; unknown_request_count: number; failed_request_count: number }
   events: Array<{ code: string; level: string; created_at: string }>
 }
@@ -35,6 +37,7 @@ export interface GraphStatus {
   available: boolean; active_version: string | null; error_code: string | null
   configured: boolean; model_name: string | null; source_characters: number; estimated_extraction_units: number
   request_timeout_seconds?: number | null; timeout_retries?: number | null; max_output_tokens?: number | null
+  extraction_concurrency?: number | null; resolution_concurrency?: number | null; rate_limit_retries?: number | null
   job: GraphJob | null; counts?: { entity_count: number; relation_count: number }
   ontology: { entity_types: string[]; relation_types: Array<{ type: string; label: string; symmetric: boolean }> }
 }

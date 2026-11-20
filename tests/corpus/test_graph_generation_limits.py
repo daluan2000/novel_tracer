@@ -98,6 +98,7 @@ def test_long_window_is_split_without_repeating_unbounded_request(tmp_path, monk
 
 
 def test_transient_timeout_retries_small_window_and_counts_each_attempt(tmp_path, monkeypatch):
+    monkeypatch.setenv("NOVEL_AGENT_GRAPH_EXTRACTION_CONCURRENCY", "1")
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     model = ScriptModel()
     model.fail_at = 1
@@ -113,6 +114,7 @@ def test_transient_timeout_retries_small_window_and_counts_each_attempt(tmp_path
 
 
 def test_retries_are_bounded_and_stop_interrupts_backoff(tmp_path, monkeypatch):
+    monkeypatch.setenv("NOVEL_AGENT_GRAPH_EXTRACTION_CONCURRENCY", "1")
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setenv("NOVEL_AGENT_GRAPH_REQUEST_RETRIES", "1")
     calls = []
