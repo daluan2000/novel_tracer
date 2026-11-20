@@ -9,11 +9,11 @@ describe('FlowGraph', () => {
     })
 
     expect(wrapper.findAll('.is-done')).toHaveLength(1)
-    expect(wrapper.find('.is-active').text()).toContain('Researcher')
+    expect(wrapper.find('.is-active').text()).toContain('线索调查')
     expect(wrapper.text()).toContain('正在执行')
 
     await wrapper.setProps({ failed: true })
-    expect(wrapper.find('.is-failed').text()).toContain('Researcher')
+    expect(wrapper.find('.is-failed').text()).toContain('线索调查')
     expect(wrapper.text()).toContain('执行失败')
   })
 })

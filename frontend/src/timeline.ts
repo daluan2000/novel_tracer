@@ -12,7 +12,7 @@ const toolNames: Record<string, string> = {
 }
 
 function nodeName(value: string | null) {
-  return value ? value[0].toUpperCase() + value.slice(1) : '模型调用'
+  return value ? ({ planner: '问题规划', researcher: '线索调查', tools: '查找原文', assessor: '证据核验', writer: '整理回答', replanner: '调整计划' } as Record<string, string>)[value] || value : '模型调用'
 }
 
 export function timelineText(event: RunEvent) {

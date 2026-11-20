@@ -24,7 +24,7 @@ describe('timeline diagnostics', () => {
       max_retries: 2,
     }))
 
-    expect(text).toContain('Assessor 返回格式不符合要求')
+    expect(text).toContain('证据核验 返回格式不符合要求')
     expect(text).toContain('第 1 次，共 2 次')
     expect(text).not.toContain('raw')
   })

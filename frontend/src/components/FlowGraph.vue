@@ -6,11 +6,11 @@ const props = defineProps<{
 }>()
 
 const nodes = [
-  ['planner', 'Planner', '明确问题'],
-  ['researcher', 'Researcher', '选择查询词与工具'],
-  ['tools', 'Tools', '从小说中提取相关片段'],
-  ['assessor', 'Assessor', '判断证据是否可靠、充分'],
-  ['writer', 'Writer', '根据证据形成回答'],
+  ['planner', '问题规划', '明确问题'],
+  ['researcher', '线索调查', '选择查询词与工具'],
+  ['tools', '查找原文', '从小说中提取相关片段'],
+  ['assessor', '证据核验', '判断证据是否可靠、充分'],
+  ['writer', '整理回答', '根据证据形成回答'],
 ]
 
 const stateLabels: Record<string, string> = {
@@ -42,7 +42,7 @@ function stateOf(id: string) {
       <span aria-hidden="true">↳</span>
       <div class="flow-node" :class="`is-${stateOf('replanner')}`">
         <span class="node-mark" aria-hidden="true">{{ stateOf('replanner') === 'done' ? '✓' : 'R' }}</span>
-        <span><strong>Replanner</strong><small>补充或修正检索方向</small></span>
+        <span><strong>调整计划</strong><small>补充或修正检索方向</small></span>
       </div>
       <span class="branch-copy">证据不足时重新制定检索策略</span>
     </div>

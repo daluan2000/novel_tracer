@@ -1,7 +1,9 @@
-import { flushPromises, mount } from '@vue/test-utils'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from './api'
 import App from './App.vue'
+
+enableAutoUnmount(afterEach)
 
 vi.mock('./api', () => ({
   api: {
@@ -18,6 +20,7 @@ describe('App upload workflow', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     localStorage.clear()
+    window.history.replaceState(null, '', '#/agent')
     vi.mocked(api.config).mockResolvedValue({
       ready: true, model_name: 'test-model', default_max_steps: 16,
       structured_output_retries: 2, embedding_configured: true,
@@ -64,7 +67,7 @@ describe('App upload workflow', () => {
   it('keeps workbench tabs disabled until a TXT upload succeeds', async () => {
     const wrapper = mount(App)
     await flushPromises()
-    expect(wrapper.findAll('.tabs button').every((button) => button.attributes('disabled') !== undefined)).toBe(true)
+    expect(wrapper.findAll('.tabs button').slice(1).every((button) => button.attributes('disabled') !== undefined)).toBe(true)
 
     const input = wrapper.find('input[type="file"]')
     const file = new File(['第一章\n正文'], 'sample.txt', { type: 'text/plain' })
@@ -128,9 +131,10 @@ describe('App upload workflow', () => {
 
     const wrapper = mount(App)
     await flushPromises()
+    await wrapper.findAll('.tabs button').find(button => button.text() === '检索设置')!.trigger('click')
     const toggle = wrapper.find('.embedding-toggle input')
     expect((toggle.element as HTMLInputElement).checked).toBe(false)
-    expect(wrapper.find('.embedding-toggle').text()).toContain('Embedding 已关闭')
+    expect(wrapper.find('.embedding-toggle').text()).toContain('语义检索未开启')
 
     await toggle.setValue(true)
     await flushPromises()
@@ -153,7 +157,29 @@ describe('App upload workflow', () => {
     const wrapper = mount(App)
     await flushPromises()
 
+    await wrapper.findAll('.tabs button').find(button => button.text() === '检索设置')!.trigger('click')
     expect(wrapper.find('.embedding-toggle input').attributes('disabled')).toBeDefined()
-    expect(wrapper.find('.embedding-toggle').text()).toContain('Embedding 未配置')
+    expect(wrapper.find('.embedding-toggle').text()).toContain('语义检索未配置')
   })
+  it('preserves a question draft across pages and supports direct page links', async () => {
+    const saved = await vi.mocked(api.uploadNovel).getMockImplementation()!(new File([], 'ignored.txt'))
+    vi.mocked(api.novels).mockResolvedValue({ items: [saved], total: 1 })
+    window.history.replaceState(null, '', '#/search')
+    const wrapper = mount(App)
+    await flushPromises()
+    expect(wrapper.get('h1').text()).toBe('原文检索')
+    await wrapper.findAll('.tabs button').find(button => button.text() === '小说问答')!.trigger('click')
+    const workspace = wrapper.get('.agent-panel').element
+    await wrapper.get('textarea').setValue('主角为什么离开？')
+    await wrapper.findAll('.tabs button').find(button => button.text() === '我的书架')!.trigger('click')
+    expect(wrapper.get('.agent-panel').element).toBe(workspace)
+    await wrapper.findAll('.tabs button').find(button => button.text() === '小说问答')!.trigger('click')
+    expect((wrapper.get('textarea').element as HTMLTextAreaElement).value).toBe('主角为什么离开？')
+    expect(window.location.hash).toBe('#/agent')
+    window.history.replaceState(null, '', '#/structure')
+    window.dispatchEvent(new HashChangeEvent('hashchange'))
+    await flushPromises()
+    expect(wrapper.get('h1').text()).toBe('章节目录')
+  })
+
 })
