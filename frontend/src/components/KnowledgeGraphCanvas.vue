@@ -80,6 +80,18 @@ function changeZoom(factor: number) {
   if (!cy) return
   cy.zoom({ level: cy.zoom() * factor, renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 } })
 }
+function handleWheel(event: WheelEvent) {
+  // Handle wheels before Cytoscape so normal scrolling can reach the page's
+  // native scroll container without changing the graph or swallowing scroll.
+  event.stopImmediatePropagation()
+  if (!event.ctrlKey || !cy || !host.value) return
+  event.preventDefault()
+  const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? cy.height() : 1
+  const delta = Math.max(-200, Math.min(200, event.deltaY * unit))
+  const level = Math.max(cy.minZoom(), Math.min(cy.maxZoom(), cy.zoom() * Math.exp(-delta * 0.002)))
+  const bounds = host.value.getBoundingClientRect()
+  cy.zoom({ level, renderedPosition: { x: event.clientX - bounds.left, y: event.clientY - bounds.top } })
+}
 function selectEdge() {
   if (!cy) return
   cy.edges().removeClass('active')
@@ -185,7 +197,7 @@ onBeforeUnmount(() => { disposed = true; observer?.disconnect(); cy?.destroy() }
       </div>
     </div>
     <p v-if="error" class="graph-canvas-error" role="alert">{{ error }}</p>
-    <div ref="host" class="graph-canvas" aria-label="实体关系图；完整内容亦可在下方列表中查看"></div>
+    <div ref="host" class="graph-canvas" aria-label="实体关系图；Ctrl 加滚轮缩放，完整内容亦可在下方列表中查看" @wheel.capture="handleWheel"></div>
     <div class="graph-canvas-footer">
       <div class="graph-legend"><span v-for="type in legend" :key="type.label"><i :style="{ background: type.color }"></i>{{ type.label }}</span><span v-if="rootId" class="graph-root-hint">光晕标记查询实体</span></div>
       <div class="graph-zoom-controls">
@@ -197,6 +209,6 @@ onBeforeUnmount(() => { disposed = true; observer?.disconnect(); cy?.destroy() }
       <template v-else-if="inspectedEdge"><strong>{{ nodeName(inspectedEdge.source) }} {{ symmetric.includes(inspectedEdge.type) ? '↔' : '→' }} {{ nodeName(inspectedEdge.target) }}</strong><span>{{ relationText }}</span></template>
       <span v-else>{{ dense ? '关系较多，悬停或点选连线可清楚查看关系文字；也可切换为全部显示。' : '悬停查看完整名称与关系，点击连线查看原文证据。' }}</span>
     </div>
-    <p class="graph-canvas-help">拖动画布平移 · 拖动节点调整位置 · 滚轮缩放 · 原大查看可按实际字号阅读</p>
+    <p class="graph-canvas-help">拖动画布平移 · 拖动节点调整位置 · Ctrl + 滚轮缩放 · 原大查看可按实际字号阅读</p>
   </div>
 </template>

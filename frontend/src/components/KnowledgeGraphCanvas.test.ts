@@ -34,6 +34,33 @@ async function mountCanvas() {
 }
 
 describe('graph readability', () => {
+  it('zooms around the cursor only with Ctrl and leaves normal wheel scrolling unblocked', async () => {
+    const wrapper = await mountCanvas()
+    const cy = graph.cy!
+    cy.zoom(0.7)
+    const host = wrapper.get('.graph-canvas').element
+    const canvas = document.createElement('canvas')
+    host.appendChild(canvas)
+    const nativeWheelHandler = vi.fn()
+    host.addEventListener('wheel', nativeWheelHandler)
+    const ordinary = new WheelEvent('wheel', { deltaY: -100, bubbles: true, cancelable: true })
+    canvas.dispatchEvent(ordinary)
+    expect(cy.zoom()).toBe(0.7)
+    expect(ordinary.defaultPrevented).toBe(false)
+    expect(nativeWheelHandler).not.toHaveBeenCalled()
+
+    const anchor = { x: 200, y: 120 }
+    const before = { x: (anchor.x - cy.pan().x) / cy.zoom(), y: (anchor.y - cy.pan().y) / cy.zoom() }
+    const upward = new WheelEvent('wheel', { deltaY: -100, ctrlKey: true, clientX: anchor.x, clientY: anchor.y, bubbles: true, cancelable: true })
+    canvas.dispatchEvent(upward)
+    expect(upward.defaultPrevented).toBe(true)
+    expect(cy.zoom()).toBeGreaterThan(0.7)
+    expect((anchor.x - cy.pan().x) / cy.zoom()).toBeCloseTo(before.x)
+    expect((anchor.y - cy.pan().y) / cy.zoom()).toBeCloseTo(before.y)
+    canvas.dispatchEvent(new WheelEvent('wheel', { deltaY: 100, ctrlKey: true, bubbles: true, cancelable: true }))
+    expect(cy.zoom()).toBeCloseTo(0.7)
+  })
+
   it('reveals the hovered relationship without the rest of the dense graph obscuring it', async () => {
     const wrapper = await mountCanvas()
     const cy = graph.cy!
