@@ -102,6 +102,39 @@ class BatchResolutionDecision(StrictModel):
     decisions: list[EntityResolutionDecision] = Field(max_length=16)
 
 
+class NameForm(StrictModel):
+    name: str = Field(min_length=1, max_length=100)
+    kind: Literal["full_name", "given_name", "address", "alias", "proper_name"] = "proper_name"
+
+
+class PersonName(StrictModel):
+    family_name: str | None = None
+    given_name: str | None = None
+
+
+class CatalogProfileProposal(StrictModel):
+    anchor_mention_id: str
+    canonical_name: str = Field(min_length=1, max_length=100)
+    name_forms: list[NameForm] = Field(min_length=1, max_length=24)
+    supporting_mentions: list[str] = Field(min_length=1, max_length=24)
+    person_name: PersonName | None = None
+    description: str = Field(default="", max_length=300)
+
+
+class CatalogDecision(StrictModel):
+    profiles: list[CatalogProfileProposal] = Field(default_factory=list, max_length=16)
+
+
+class MentionBindingDecision(StrictModel):
+    mention_id: str
+    entity_id: str | None = None
+    supporting_mentions: list[str] = Field(default_factory=list, max_length=8)
+
+
+class MentionBindingBatch(StrictModel):
+    bindings: list[MentionBindingDecision] = Field(default_factory=list, max_length=16)
+
+
 class BuildRequest(StrictModel):
     mode: Literal["start", "resume", "rebuild"] = "start"
     job_id: str | None = None

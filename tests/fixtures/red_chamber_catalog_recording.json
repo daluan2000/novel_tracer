@@ -1,0 +1,1754 @@
+{
+  "version": "a087716136814a03b5bdc87f41ea5ab1",
+  "dataset_hash": "d1808b09507dd824e174b30f8022379e376876d319164e70d56c3f840f053c1f",
+  "model": {
+    "model_name": "qwen3.7-flash",
+    "base_url": "https://maas.qianwenaiapi.com/compatible-mode/v1",
+    "temperature": 0.0,
+    "thinking_mode": "disabled"
+  },
+  "checkpoints": {
+    "catalog:38492b356baeacabfd757928": {
+      "input_hash": "b086f11649b5327df55694a7cabb964bd63ed31a80c3d2a131b6a180662d72d9",
+      "result": {
+        "profiles": [
+          {
+            "anchor_mention_id": "m146095_146098_person",
+            "canonical_name": "贾元春",
+            "name_forms": [
+              {
+                "name": "贾元春",
+                "kind": "full_name"
+              },
+              {
+                "name": "元春",
+                "kind": "given_name"
+              }
+            ],
+            "supporting_mentions": [
+              "m146095_146098_person",
+              "m97738_97740_person",
+              "m115089_115091_person",
+              "m143973_143975_person"
+            ],
+            "person_name": {
+              "family_name": "贾",
+              "given_name": "元春"
+            },
+            "description": "贾府长女，晋封为妃，省亲回大观园。"
+          }
+        ]
+      }
+    },
+    "catalog:62ee5e08a84549bf08a21a12": {
+      "input_hash": "2b4167bfffd164e6a26d42d78ae9e5dfeb22dbf92017f358e0fa8e29ead53a70",
+      "result": {
+        "profiles": [
+          {
+            "anchor_mention_id": "m17108_17111_person",
+            "canonical_name": "王熙凤",
+            "name_forms": [
+              {
+                "name": "王熙凤",
+                "kind": "full_name"
+              },
+              {
+                "name": "熙凤",
+                "kind": "given_name"
+              },
+              {
+                "name": "凤姐",
+                "kind": "alias"
+              },
+              {
+                "name": "琏嫂子",
+                "kind": "address"
+              },
+              {
+                "name": "凤辣子",
+                "kind": "alias"
+              },
+              {
+                "name": "琏二奶奶",
+                "kind": "alias"
+              }
+            ],
+            "supporting_mentions": [
+              "m17108_17111_person",
+              "m144154_144157_person",
+              "m17306_17308_person",
+              "m17646_17648_person",
+              "m38170_38172_person",
+              "m47497_47499_person",
+              "m85850_85852_person",
+              "m94709_94711_person",
+              "m130668_130670_person",
+              "m158249_158251_person",
+              "m166957_166959_person",
+              "m185230_185232_person",
+              "m199670_199672_person",
+              "m203623_203625_person",
+              "m230392_230394_person",
+              "m370074_370076_person"
+            ],
+            "person_name": {
+              "family_name": "王",
+              "given_name": "熙凤"
+            },
+            "description": "贾琏之妻，王夫人内侄女，荣国府管家。"
+          },
+          {
+            "anchor_mention_id": "m17692_17695_person",
+            "canonical_name": "王夫人",
+            "name_forms": [
+              {
+                "name": "王夫人",
+                "kind": "full_name"
+              },
+              {
+                "name": "太太",
+                "kind": "address"
+              }
+            ],
+            "supporting_mentions": [
+              "m17692_17695_person",
+              "m28223_28226_person",
+              "m38174_38177_person",
+              "m79146_79149_person",
+              "m146409_146412_person",
+              "m164972_164975_person",
+              "m167013_167016_person",
+              "m192011_192014_person",
+              "m200429_200432_person",
+              "m218923_218926_person",
+              "m221003_221006_person",
+              "m310869_310872_person"
+            ],
+            "person_name": {
+              "family_name": "王",
+              "given_name": null
+            },
+            "description": "贾政之妻，宝玉之母，荣国府主母之一。"
+          }
+        ]
+      }
+    },
+    "catalog:abdd65181968964a39194ea9": {
+      "input_hash": "91ca0de02e408f3322d6d562bc9d71ca8786aad49b5b19bba145b5afd4522bdb",
+      "result": {
+        "profiles": [
+          {
+            "anchor_mention_id": "m38373_38376_person",
+            "canonical_name": "刘姥姥",
+            "name_forms": [
+              {
+                "name": "刘姥姥",
+                "kind": "alias"
+              },
+              {
+                "name": "老亲家",
+                "kind": "address"
+              }
+            ],
+            "supporting_mentions": [
+              "m38373_38376_person",
+              "m39228_39231_person",
+              "m39351_39354_person",
+              "m40784_40787_person",
+              "m41671_41674_person",
+              "m42073_42076_person",
+              "m42400_42403_person",
+              "m48001_48004_person",
+              "m259472_259475_person",
+              "m260938_260941_person",
+              "m262875_262878_person"
+            ],
+            "person_name": {
+              "family_name": "刘",
+              "given_name": null
+            },
+            "description": "积年老寡妇，狗儿之岳母，青儿之母，板儿之祖母。因女婿狗儿生计困难，被接来同住。后两次进入贾府打抽丰，与贾母、王熙凤等人有交集。"
+          }
+        ]
+      }
+    },
+    "catalog:c9d542e8d9bf53b18f637a7b": {
+      "input_hash": "a9f721ae729ed291ab8fdaecc2cb04070a7821cad3ad3980634f2175f51ff1dd",
+      "result": {
+        "profiles": [
+          {
+            "anchor_mention_id": "m131216_131219_person",
+            "canonical_name": "史湘云",
+            "name_forms": [
+              {
+                "name": "史湘云",
+                "kind": "full_name"
+              },
+              {
+                "name": "史大姑娘",
+                "kind": "address"
+              },
+              {
+                "name": "湘云",
+                "kind": "given_name"
+              }
+            ],
+            "supporting_mentions": [
+              "m131216_131219_person",
+              "m139228_139231_person",
+              "m140791_140793_person",
+              "m142612_142614_person",
+              "m206915_206918_person",
+              "m210307_210309_person",
+              "m211932_211934_person",
+              "m212419_212422_person",
+              "m239575_239578_person",
+              "m242804_242807_person",
+              "m250088_250091_person",
+              "m253861_253863_person",
+              "m254957_254959_person",
+              "m257777_257779_person",
+              "m271609_271612_person",
+              "m267753_267755_person",
+              "m275345_275347_person"
+            ],
+            "person_name": {
+              "family_name": "史",
+              "given_name": "湘云"
+            },
+            "description": "贾母侄孙女，史侯家小姐，宝玉的表妹。"
+          }
+        ]
+      }
+    },
+    "catalog:a97979e74032d9c9e53c0b4c": {
+      "input_hash": "273dccefbeaee705e8a780985f6cbc14ad6bce1158c34e2686ba0a5799526092",
+      "result": {
+        "profiles": [
+          {
+            "anchor_mention_id": "m11515_11517_person",
+            "canonical_name": "宝玉",
+            "name_forms": [
+              {
+                "name": "宝玉",
+                "kind": "given_name"
+              },
+              {
+                "name": "宝二爷",
+                "kind": "address"
+              },
+              {
+                "name": "宝兄弟",
+                "kind": "alias"
+              }
+            ],
+            "supporting_mentions": [
+              "m11515_11517_person",
+              "m180073_180076_person",
+              "m132715_132717_person"
+            ],
+            "person_name": {
+              "family_name": "贾",
+              "given_name": "宝玉"
+            },
+            "description": "荣国府公子，衔玉而生，贾政之子。"
+          },
+          {
+            "anchor_mention_id": "m29224_29227_person",
+            "canonical_name": "林黛玉",
+            "name_forms": [
+              {
+                "name": "林黛玉",
+                "kind": "full_name"
+              },
+              {
+                "name": "黛玉",
+                "kind": "given_name"
+              },
+              {
+                "name": "林姑娘",
+                "kind": "address"
+              },
+              {
+                "name": "林妹妹",
+                "kind": "address"
+              },
+              {
+                "name": "颦儿",
+                "kind": "alias"
+              }
+            ],
+            "supporting_mentions": [
+              "m29224_29227_person",
+              "m9397_9399_person",
+              "m22001_22004_person",
+              "m283533_283535_person"
+            ],
+            "person_name": {
+              "family_name": "林",
+              "given_name": "黛玉"
+            },
+            "description": "贾母外孙女，林如海之女，寄居贾府。"
+          },
+          {
+            "anchor_mention_id": "m27271_27273_person",
+            "canonical_name": "薛宝钗",
+            "name_forms": [
+              {
+                "name": "薛宝钗",
+                "kind": "full_name"
+              },
+              {
+                "name": "宝钗",
+                "kind": "given_name"
+              },
+              {
+                "name": "宝姐姐",
+                "kind": "address"
+              }
+            ],
+            "supporting_mentions": [
+              "m27271_27273_person",
+              "m48589_48592_person",
+              "m175192_175194_person"
+            ],
+            "person_name": {
+              "family_name": "薛",
+              "given_name": "宝钗"
+            },
+            "description": "薛姨妈之女，王夫人外甥女，与宝玉有金玉姻缘之说。"
+          },
+          {
+            "anchor_mention_id": "m815959_815962_person",
+            "canonical_name": "甄宝玉",
+            "name_forms": [
+              {
+                "name": "甄宝玉",
+                "kind": "full_name"
+              },
+              {
+                "name": "甄少爷",
+                "kind": "address"
+              }
+            ],
+            "supporting_mentions": [
+              "m815959_815962_person",
+              "m839788_839791_person"
+            ],
+            "person_name": {
+              "family_name": "甄",
+              "given_name": "宝玉"
+            },
+            "description": "金陵甄家之子，相貌与贾宝玉相似，后中举。"
+          }
+        ]
+      }
+    },
+    "catalog:ed27867696bf1d95b86a3f75": {
+      "input_hash": "1622fd0404e8d0342e5ba179ecfedb8e3b57a15c0e152be5cab1a080a078c52f",
+      "result": {
+        "profiles": [
+          {
+            "anchor_mention_id": "m41276_41278_person",
+            "canonical_name": "平儿",
+            "name_forms": [
+              {
+                "name": "平儿",
+                "kind": "proper_name"
+              }
+            ],
+            "supporting_mentions": [
+              "m41276_41278_person",
+              "m42837_42839_person",
+              "m87400_87402_person",
+              "m98803_98805_person",
+              "m137537_137539_person",
+              "m179642_179644_person",
+              "m257699_257701_person",
+              "m281735_281737_person",
+              "m295539_295541_person",
+              "m299462_299464_person",
+              "m312580_312582_person",
+              "m339541_339543_person"
+            ],
+            "person_name": null,
+            "description": "凤姐的心腹通房大丫头，协助管理家务，常替凤姐传话、办事。"
+          }
+        ]
+      }
+    },
+    "catalog:3fd1dadece212db3087c1fde": {
+      "input_hash": "82cd80afe1262fd54fee5a84f52c00f7646ff3ed96aadb257908f9f4b3e214bd",
+      "result": {
+        "profiles": [
+          {
+            "anchor_mention_id": "m168520_168523_person",
+            "canonical_name": "贾惜春",
+            "name_forms": [
+              {
+                "name": "贾惜春",
+                "kind": "full_name"
+              },
+              {
+                "name": "惜春",
+                "kind": "given_name"
+              },
+              {
+                "name": "贾府三艳",
+                "kind": "alias"
+              }
+            ],
+            "supporting_mentions": [
+              "m168520_168523_person",
+              "m20048_20050_person",
+              "m29257_29259_person",
+              "m193406_193408_person",
+              "m232352_232354_person",
+              "m244823_244825_person",
+              "m265237_265239_person",
+              "m271635_271637_person",
+              "m284986_284988_person",
+              "m305578_305580_person",
+              "m329960_329962_person",
+              "m343978_343980_person",
+              "m435320_435322_person"
+            ],
+            "person_name": {
+              "family_name": "贾",
+              "given_name": "惜春"
+            },
+            "description": "贾母之孙女，贾珍之妹，贾府四艳之一。擅长绘画，住暖香坞，有丫头入画、彩屏。"
+          },
+          {
+            "anchor_mention_id": "m193406_193408_person",
+            "canonical_name": "入画",
+            "name_forms": [
+              {
+                "name": "入画",
+                "kind": "proper_name"
+              }
+            ],
+            "supporting_mentions": [
+              "m193406_193408_person"
+            ],
+            "person_name": null,
+            "description": "惜春的丫头。"
+          },
+          {
+            "anchor_mention_id": "m193406_193408_person",
+            "canonical_name": "彩屏",
+            "name_forms": [
+              {
+                "name": "彩屏",
+                "kind": "proper_name"
+              }
+            ],
+            "supporting_mentions": [
+              "m193406_193408_person"
+            ],
+            "person_name": null,
+            "description": "惜春的丫头。"
+          }
+        ]
+      }
+    },
+    "catalog:f83bd83ef4a8993cbded09e4": {
+      "input_hash": "0e8e45d17beda882bea6b501808659956a0f2afefd15a3ffab4b03791ffc0aff",
+      "result": {
+        "profiles": [
+          {
+            "anchor_mention_id": "m30475_30477_person",
+            "canonical_name": "晴雯",
+            "name_forms": [
+              {
+                "name": "晴雯",
+                "kind": "proper_name"
+              }
+            ],
+            "supporting_mentions": [
+              "m30475_30477_person",
+              "m59810_59812_person",
+              "m169552_169554_person",
+              "m175484_175486_person",
+              "m202104_202106_person",
+              "m204832_204834_person",
+              "m225742_225744_person",
+              "m225875_225877_person",
+              "m332631_332633_person",
+              "m349722_349724_person",
+              "m356159_356161_person",
+              "m359461_359463_person"
+            ],
+            "person_name": null,
+            "description": "宝玉房中的大丫鬟，与袭人、麝月、碧痕等同为宝玉侍妾或贴身侍女。性格直率，曾与碧痕拌嘴，因得罪宝玉被斥责可能打发出去。"
+          }
+        ]
+      }
+    },
+    "catalog:41a72e27bf01d6b52203a371": {
+      "input_hash": "2a07989cd6f628c00899864c3a27219f5de07a50fae2e095aee414e031577dcf",
+      "result": {
+        "profiles": [
+          {
+            "anchor_mention_id": "m22344_22346_person",
+            "canonical_name": "袭人",
+            "name_forms": [
+              {
+                "name": "袭人",
+                "kind": "proper_name"
+              },
+              {
+                "name": "珍珠",
+                "kind": "given_name"
+              }
+            ],
+            "supporting_mentions": [
+              "m22344_22346_person",
+              "m119509_119511_person",
+              "m148280_148282_person",
+              "m167023_167025_person",
+              "m175081_175083_person",
+              "m201921_201923_person",
+              "m203056_203058_person",
+              "m206832_206834_person",
+              "m213725_213727_person",
+              "m220998_221000_person",
+              "m226677_226679_person",
+              "m312545_312547_person"
+            ],
+            "person_name": {
+              "family_name": "花",
+              "given_name": "袭人"
+            },
+            "description": "原为贾母之婢，本名珍珠，后赐给宝玉，改名袭人。宝玉的大丫鬟。"
+          },
+          {
+            "anchor_mention_id": "m674745_674747_person",
+            "canonical_name": "珍珠",
+            "name_forms": [
+              {
+                "name": "珍珠",
+                "kind": "proper_name"
+              }
+            ],
+            "supporting_mentions": [
+              "m674745_674747_person",
+              "m690883_690885_person",
+              "m755931_755933_person",
+              "m769734_769736_person",
+              "m780717_780719_person",
+              "m789304_789306_person",
+              "m797084_797086_person"
+            ],
+            "person_name": null,
+            "description": "贾母身边的丫头（或嬷嬷/管事），在后续章节中负责传达贾母指令、协助照顾贾母等事务。与袭人（原名珍珠）非同一人，此处珍珠为另一角色。"
+          }
+        ]
+      }
+    },
+    "catalog:1e8b0f092c11c01e85eb6fff": {
+      "input_hash": "81b42c4e868658b8b47045cd687501c6be1f3bedd74225918cd6e440f7deaf6f",
+      "result": {
+        "profiles": [
+          {
+            "anchor_mention_id": "m55940_55942_person",
+            "canonical_name": "紫鹃",
+            "name_forms": [
+              {
+                "name": "紫鹃",
+                "kind": "proper_name"
+              }
+            ],
+            "supporting_mentions": [
+              "m55940_55942_person",
+              "m151922_151924_person",
+              "m165065_165067_person",
+              "m172743_172745_person",
+              "m176327_176329_person",
+              "m193445_193447_person",
+              "m254057_254059_person",
+              "m312306_312308_person",
+              "m395063_395065_person",
+              "m412905_412907_person",
+              "m435361_435363_person",
+              "m501578_501580_person"
+            ],
+            "person_name": null,
+            "description": "林黛玉的丫鬟，负责照顾黛玉生活起居，送茶、送小手炉等。"
+          }
+        ]
+      }
+    },
+    "catalog:774686c98e929e27b210a117": {
+      "input_hash": "d8cf52bd89a64af9017f4ff1f42a4b14f865821cb458c2bd866a662e8ade51f3",
+      "result": {
+        "profiles": [
+          {
+            "anchor_mention_id": "m45041_45044_person",
+            "canonical_name": "薛姨妈",
+            "name_forms": [
+              {
+                "name": "薛姨妈",
+                "kind": "address"
+              }
+            ],
+            "supporting_mentions": [
+              "m45041_45044_person",
+              "m46521_46524_person",
+              "m116786_116789_person",
+              "m193054_193057_person",
+              "m223077_223080_person",
+              "m230174_230177_person",
+              "m251649_251652_person",
+              "m267725_267728_person",
+              "m272530_272533_person",
+              "m288316_288319_person",
+              "m319325_319328_person",
+              "m326552_326555_person"
+            ],
+            "person_name": null,
+            "description": "王夫人的妹妹，薛宝钗和薛蟠的母亲。"
+          }
+        ]
+      }
+    },
+    "catalog:088bbb55067ba4619fe0c381": {
+      "input_hash": "4b27bdb7fe8fb8c76e0ed21866671ba987880dd53f2dc3772d43c08b539dddd9",
+      "result": {
+        "profiles": [
+          {
+            "anchor_mention_id": "m22971_22973_person",
+            "canonical_name": "薛蟠",
+            "name_forms": [
+              {
+                "name": "薛蟠",
+                "kind": "full_name"
+              },
+              {
+                "name": "薛大哥哥",
+                "kind": "alias"
+              }
+            ],
+            "supporting_mentions": [
+              "m22971_22973_person",
+              "m26153_26155_person",
+              "m26536_26538_person",
+              "m27252_27254_person",
+              "m27948_27950_person",
+              "m28183_28185_person",
+              "m28228_28230_person",
+              "m61256_61258_person",
+              "m82505_82507_person",
+              "m118396_118398_person",
+              "m173360_173362_person",
+              "m221697_221699_person"
+            ],
+            "person_name": {
+              "family_name": "薛",
+              "given_name": "蟠"
+            },
+            "description": "金陵四大家族之一薛家的长子，字文夏。倚财仗势打死冯渊，后随母妹进京入住贾府。性情粗鲁、好色、不学无术，常与宝玉等人混迹。"
+          }
+        ]
+      }
+    },
+    "catalog:2e274f07dfecf936069e2e7f": {
+      "input_hash": "cee46c81db174f2c4a03800dca19a39238585c5e0e2ac81319ce5693e4d71cd9",
+      "result": {
+        "profiles": [
+          {
+            "anchor_mention_id": "m11271_11273_person",
+            "canonical_name": "贾政",
+            "name_forms": [
+              {
+                "name": "贾政",
+                "kind": "full_name"
+              },
+              {
+                "name": "政老爹",
+                "kind": "alias"
+              }
+            ],
+            "supporting_mentions": [
+              "m11271_11273_person",
+              "m28411_28413_person",
+              "m80266_80268_person",
+              "m104523_104525_person",
+              "m114163_114165_person",
+              "m144049_144051_person",
+              "m175090_175092_person",
+              "m216395_216397_person",
+              "m219550_219552_person",
+              "m287818_287820_person",
+              "m500655_500657_person",
+              "m543939_543941_person"
+            ],
+            "person_name": {
+              "family_name": "贾",
+              "given_name": "政"
+            },
+            "description": "荣国府二老爷，贾代善与史太君之子，贾赦之弟，贾珠、贾宝玉、贾环之父。"
+          }
+        ]
+      }
+    },
+    "catalog:06e815878ebdfbbf1d413efb": {
+      "input_hash": "05c26b939c88ddd31ab89283fbb59ca3b95d7418c955a3ecaf48eb30405a8e4c",
+      "result": {
+        "profiles": [
+          {
+            "anchor_mention_id": "m21057_21059_person",
+            "canonical_name": "贾母",
+            "name_forms": [
+              {
+                "name": "贾母",
+                "kind": "proper_name"
+              }
+            ],
+            "supporting_mentions": [
+              "m21057_21059_person",
+              "m29234_29236_person",
+              "m75079_75081_person",
+              "m118054_118056_person",
+              "m136265_136267_person",
+              "m167010_167012_person",
+              "m186087_186089_person",
+              "m192026_192028_person",
+              "m192881_192883_person",
+              "m198917_198919_person",
+              "m223086_223088_person",
+              "m345766_345768_person"
+            ],
+            "person_name": null,
+            "description": "荣国府的老祖宗，宝玉、黛玉的祖母/外祖母，家族最高长辈。"
+          }
+        ]
+      }
+    },
+    "catalog:0c69853f69f9932995f27050": {
+      "input_hash": "7722aac2c7290247c5c4ed96668df034f9886083cd0ccbc3df34377830ed0211",
+      "result": {
+        "profiles": [
+          {
+            "anchor_mention_id": "m129545_129547_person",
+            "canonical_name": "贾环",
+            "name_forms": [
+              {
+                "name": "贾环",
+                "kind": "full_name"
+              }
+            ],
+            "supporting_mentions": [
+              "m129545_129547_person",
+              "m130534_130536_person",
+              "m147966_147968_person",
+              "m153144_153146_person",
+              "m161175_161177_person",
+              "m162138_162140_person",
+              "m217779_217781_person",
+              "m370277_370279_person",
+              "m371155_371157_person",
+              "m418576_418578_person"
+            ],
+            "person_name": {
+              "family_name": "贾",
+              "given_name": "环"
+            },
+            "description": "贾政与赵姨娘之子，宝玉同父异母弟。因嫉妒宝玉受宠及被莺儿、彩云等丫鬟轻视而心生怨恨，曾故意烫伤宝玉，并向贾政诬告金钏儿跳井。"
+          }
+        ]
+      }
+    },
+    "catalog:ca3528eab051b57fc9f6b97a": {
+      "input_hash": "93e980c98c29844c8c1606c48811a067a6b4e894c5a8c882118fa51a45c81613",
+      "result": {
+        "profiles": [
+          {
+            "anchor_mention_id": "m11089_11091_person",
+            "canonical_name": "贾珍",
+            "name_forms": [
+              {
+                "name": "贾珍",
+                "kind": "full_name"
+              },
+              {
+                "name": "珍爷",
+                "kind": "alias"
+              }
+            ],
+            "supporting_mentions": [
+              "m11089_11091_person",
+              "m29011_29013_person",
+              "m66936_66938_person",
+              "m74802_74804_person",
+              "m84107_84109_person",
+              "m97546_97548_person",
+              "m104469_104471_person",
+              "m118390_118392_person",
+              "m193886_193888_person"
+            ],
+            "person_name": {
+              "family_name": "贾",
+              "given_name": "珍"
+            },
+            "description": "宁国府现任族长，贾敬之子，贾蓉之父。"
+          }
+        ]
+      }
+    },
+    "catalog:ede7d87792f6692cfd605b4b": {
+      "input_hash": "5a7a814a8386960f2bb3a7e850b0cab26e8142ad60479b69f811792938d12391",
+      "result": {
+        "profiles": [
+          {
+            "anchor_mention_id": "m13888_13890_person",
+            "canonical_name": "贾琏",
+            "name_forms": [
+              {
+                "name": "贾琏",
+                "kind": "full_name"
+              },
+              {
+                "name": "琏爷",
+                "kind": "alias"
+              }
+            ],
+            "supporting_mentions": [
+              "m13888_13890_person",
+              "m70342_70344_person",
+              "m100281_100283_person",
+              "m137526_137528_person",
+              "m152441_152443_person",
+              "m299249_299251_person",
+              "m315391_315393_person",
+              "m370938_370940_person",
+              "m406623_406625_person",
+              "m460526_460528_person",
+              "m470656_470658_person",
+              "m486812_486814_person"
+            ],
+            "person_name": {
+              "family_name": "贾",
+              "given_name": "琏"
+            },
+            "description": ""
+          }
+        ]
+      }
+    },
+    "catalog:f778e4b18a71a586f47d0a56": {
+      "input_hash": "362a04140c31f79f5b7149ba89a00bb30f2293fc68e5d2faea2002f907b18280",
+      "result": {
+        "profiles": [
+          {
+            "anchor_mention_id": "m11156_11158_person",
+            "canonical_name": "贾蓉",
+            "name_forms": [
+              {
+                "name": "贾蓉",
+                "kind": "full_name"
+              },
+              {
+                "name": "蓉哥儿",
+                "kind": "address"
+              }
+            ],
+            "supporting_mentions": [
+              "m11156_11158_person",
+              "m29643_29645_person",
+              "m49323_49325_person",
+              "m51783_51785_person",
+              "m59013_59015_person",
+              "m68370_68372_person",
+              "m70235_70237_person",
+              "m82980_82982_person",
+              "m94033_94035_person",
+              "m97556_97558_person",
+              "m194676_194678_person",
+              "m282091_282093_person"
+            ],
+            "person_name": {
+              "family_name": "贾",
+              "given_name": "蓉"
+            },
+            "description": ""
+          }
+        ]
+      }
+    },
+    "catalog:43729468f8f7a5d6dd6ee639": {
+      "input_hash": "79a0fcced4481100691f5652d704302e54269352e42db28d6e4fcc604f895e10",
+      "result": {
+        "profiles": [
+          {
+            "anchor_mention_id": "m11266_11268_person",
+            "canonical_name": "贾赦",
+            "name_forms": [
+              {
+                "name": "贾赦",
+                "kind": "full_name"
+              }
+            ],
+            "supporting_mentions": [
+              "m11266_11268_person",
+              "m16033_16035_person",
+              "m18059_18061_person",
+              "m80258_80260_person",
+              "m91184_91186_person",
+              "m102670_102672_person",
+              "m116403_116405_person",
+              "m309861_309863_person",
+              "m315729_315731_person",
+              "m320737_320739_person",
+              "m367205_367207_person",
+              "m369043_369045_person"
+            ],
+            "person_name": {
+              "family_name": "贾",
+              "given_name": "赦"
+            },
+            "description": "荣国府长子，贾代善与史太君之子，贾政之兄。"
+          }
+        ]
+      }
+    },
+    "catalog:71d255609ee553a91412c27e": {
+      "input_hash": "0441a6a21b64a81692e1563df25f1715898d3e3508f42c319f99ea71aa01770e",
+      "result": {
+        "profiles": [
+          {
+            "anchor_mention_id": "m203680_203683_person",
+            "canonical_name": "贾迎春",
+            "name_forms": [
+              {
+                "name": "贾迎春",
+                "kind": "full_name"
+              },
+              {
+                "name": "迎春",
+                "kind": "given_name"
+              }
+            ],
+            "supporting_mentions": [
+              "m203680_203683_person",
+              "m20020_20022_person",
+              "m28777_28779_person",
+              "m46953_46955_person",
+              "m90099_90101_person",
+              "m97349_97351_person",
+              "m131118_131120_person",
+              "m143786_143788_person",
+              "m193400_193402_person",
+              "m219511_219513_person",
+              "m232359_232361_person",
+              "m244089_244091_person",
+              "m267769_267771_person"
+            ],
+            "person_name": {
+              "family_name": "贾",
+              "given_name": "迎春"
+            },
+            "description": ""
+          }
+        ]
+      }
+    },
+    "catalog:89d924d31cf49ec284bf6f19": {
+      "input_hash": "c23b6b735924e15dc0bee2b36bc9cb3e4618f2244162681341c852041f8fe2a5",
+      "result": {
+        "profiles": [
+          {
+            "anchor_mention_id": "m4656_4659_person",
+            "canonical_name": "贾雨村",
+            "name_forms": [
+              {
+                "name": "贾雨村",
+                "kind": "full_name"
+              },
+              {
+                "name": "贾化",
+                "kind": "given_name"
+              },
+              {
+                "name": "时飞",
+                "kind": "proper_name"
+              },
+              {
+                "name": "雨村",
+                "kind": "alias"
+              }
+            ],
+            "supporting_mentions": [
+              "m4656_4659_person",
+              "m28236_28239_person",
+              "m97861_97864_person",
+              "m211819_211822_person"
+            ],
+            "person_name": {
+              "family_name": "贾",
+              "given_name": "雨村"
+            },
+            "description": "姓贾名化，表字时飞，别号雨村。胡州人氏，诗书仕宦之族，后成为官员，曾与甄士隐交接，维持薛蟠官司，由王子腾保举进京补缺，与贾琏同宗，与黛玉有师从之谊。"
+          },
+          {
+            "anchor_mention_id": "m415_418_person",
+            "canonical_name": "假语村言",
+            "name_forms": [
+              {
+                "name": "贾雨村",
+                "kind": "alias"
+              }
+            ],
+            "supporting_mentions": [
+              "m415_418_person"
+            ],
+            "person_name": null,
+            "description": "作者自述所用‘假语村言’谐音‘贾雨村’，此处指代叙事手法或虚构人物概念，非实指上述官员贾雨村本人，但文本明确建立二者关联。"
+          }
+        ]
+      }
+    },
+    "catalog:270624f8774665a42d966713": {
+      "input_hash": "b228da940816e628ca03ba50802abf95a6f5e19921dc1f59cffc27c9e24167c2",
+      "result": {
+        "profiles": [
+          {
+            "anchor_mention_id": "m29627_29630_person",
+            "canonical_name": "邢夫人",
+            "name_forms": [
+              {
+                "name": "邢夫人",
+                "kind": "proper_name"
+              }
+            ],
+            "supporting_mentions": [
+              "m29627_29630_person",
+              "m72195_72198_person",
+              "m97332_97335_person",
+              "m153018_153021_person",
+              "m288319_288322_person",
+              "m290079_290082_person",
+              "m309283_309286_person",
+              "m314818_314821_person",
+              "m317612_317615_person",
+              "m333704_333707_person",
+              "m367827_367830_person",
+              "m400159_400162_person"
+            ],
+            "person_name": null,
+            "description": "贾赦之妻，贾宝玉的继母。"
+          }
+        ]
+      }
+    },
+    "catalog:5f05a7788e4cb51f085540e4": {
+      "input_hash": "e83b692e685ceb95bfac65add74ebd59be4b3cb3d86b74c47d2461d35f890fb5",
+      "result": {
+        "profiles": [
+          {
+            "anchor_mention_id": "m22193_22195_person",
+            "canonical_name": "雪雁",
+            "name_forms": [
+              {
+                "name": "雪雁",
+                "kind": "proper_name"
+              }
+            ],
+            "supporting_mentions": [
+              "m22193_22195_person",
+              "m55892_55894_person",
+              "m133208_133210_person",
+              "m165067_165069_person",
+              "m176329_176331_person",
+              "m229036_229038_person",
+              "m393982_393984_person",
+              "m397690_397692_person",
+              "m453903_453905_person",
+              "m596983_596985_person"
+            ],
+            "person_name": null,
+            "description": "林黛玉自幼随身的十岁小丫头，原由贾母指派给黛玉，后常与紫鹃一同侍奉。"
+          }
+        ]
+      }
+    },
+    "catalog:7a9f0f041f35d4d7a115ec30": {
+      "input_hash": "cd823e0425705cca905a9ff4c4b85b3b0b60ccabfbb7fd1509f6c684e226380a",
+      "result": {
+        "profiles": [
+          {
+            "anchor_mention_id": "m46310_46312_person",
+            "canonical_name": "香菱",
+            "name_forms": [
+              {
+                "name": "香菱",
+                "kind": "proper_name"
+              }
+            ],
+            "supporting_mentions": [
+              "m46310_46312_person",
+              "m46657_46659_person",
+              "m98920_98922_person",
+              "m151859_151861_person",
+              "m176747_176749_person",
+              "m178245_178247_person",
+              "m183070_183072_person",
+              "m232056_232058_person",
+              "m326152_326154_person",
+              "m326682_326684_person",
+              "m328179_328181_person",
+              "m336876_336878_person"
+            ],
+            "person_name": null,
+            "description": "薛蟠之妻（房里人），原为甄士隐之女，幼时被拐卖。"
+          }
+        ]
+      }
+    },
+    "audit:0:3fd1dadece212db3087c1fde": {
+      "input_hash": "85f14f9f8ad4b206f21b59d944a9a93a9ac5f28041bdae8c49cbfbf54c8dc5e8",
+      "result": {
+        "profiles": [
+          {
+            "anchor_mention_id": "m168520_168523_person",
+            "canonical_name": "贾惜春",
+            "name_forms": [
+              {
+                "name": "贾惜春",
+                "kind": "full_name"
+              },
+              {
+                "name": "惜春",
+                "kind": "given_name"
+              }
+            ],
+            "supporting_mentions": [
+              "m168520_168523_person",
+              "m20048_20050_person",
+              "m29257_29259_person",
+              "m193406_193408_person",
+              "m232352_232354_person",
+              "m244823_244825_person",
+              "m265237_265239_person",
+              "m271635_271637_person",
+              "m284986_284988_person",
+              "m305578_305580_person",
+              "m329960_329962_person",
+              "m343978_343980_person",
+              "m435320_435322_person"
+            ],
+            "person_name": {
+              "family_name": "贾",
+              "given_name": "惜春"
+            },
+            "description": "贾府四艳之一，贾珍之妹，贾母孙女。擅长绘画，住暖香坞。"
+          }
+        ]
+      }
+    },
+    "audit:0:89d924d31cf49ec284bf6f19": {
+      "input_hash": "8ed729d03de747092f16b476d8c928ed8ae77b186f0408bd7e994b2aa1f7843c",
+      "result": {
+        "profiles": [
+          {
+            "anchor_mention_id": "m4656_4659_person",
+            "canonical_name": "贾雨村",
+            "name_forms": [
+              {
+                "name": "贾雨村",
+                "kind": "full_name"
+              },
+              {
+                "name": "贾化",
+                "kind": "given_name"
+              },
+              {
+                "name": "时飞",
+                "kind": "proper_name"
+              },
+              {
+                "name": "雨村",
+                "kind": "alias"
+              }
+            ],
+            "supporting_mentions": [
+              "m4656_4659_person"
+            ],
+            "person_name": {
+              "family_name": "贾",
+              "given_name": "雨村"
+            },
+            "description": "胡州人，原系诗书仕宦之族，末世落魄。表字时飞，别号雨村。本名贾化。曾寄居葫芦庙，卖字作文。后得甄士隐资助进京赶考，中进士，选为知府。后因贪酷被参革职。后通过林如海推荐，复任知县，并维持薛蟠人命官司。又因王子腾提拔，补授京缺，与贾琏同宗，与黛玉有师从之谊。"
+          },
+          {
+            "anchor_mention_id": "m415_418_person",
+            "canonical_name": "假语村言",
+            "name_forms": [
+              {
+                "name": "假语村言",
+                "kind": "alias"
+              },
+              {
+                "name": "贾雨村",
+                "kind": "alias"
+              }
+            ],
+            "supporting_mentions": [
+              "m415_418_person"
+            ],
+            "person_name": null,
+            "description": "作者自注的笔名/化名来源，意为‘假语存焉’或‘假语村言’，是小说开篇虚构故事的叙述者代称，非书中实际人物身份，但作为‘贾雨村’三字的名源被提及。"
+          }
+        ]
+      }
+    },
+    "audit:1:89d924d31cf49ec284bf6f19": {
+      "input_hash": "1a2ab9f253235f95f52d5c39a8be21f6cee7b9d25c3e64ab1d9aa5b46f8f8be6",
+      "result": {
+        "profiles": [
+          {
+            "anchor_mention_id": "m4656_4659_person",
+            "canonical_name": "贾雨村",
+            "name_forms": [
+              {
+                "name": "贾雨村",
+                "kind": "full_name"
+              },
+              {
+                "name": "贾化",
+                "kind": "given_name"
+              },
+              {
+                "name": "时飞",
+                "kind": "given_name"
+              },
+              {
+                "name": "雨村",
+                "kind": "alias"
+              }
+            ],
+            "supporting_mentions": [
+              "m4656_4659_person",
+              "m28236_28239_person",
+              "m97861_97864_person",
+              "m211819_211822_person"
+            ],
+            "person_name": {
+              "family_name": "贾",
+              "given_name": "雨村"
+            },
+            "description": ""
+          }
+        ]
+      }
+    },
+    "link:2b4ae227fe5a9c90bd06fc0a": {
+      "input_hash": "95a8b90f5b1543c60a03d4969c1bdee3839f2e496eeddaffce695e58df73d1db",
+      "result": {
+        "bindings": [
+          {
+            "mention_id": "m11515_11517_person",
+            "entity_id": "fa8a2b645f10f7925b0bc5aa07f450fd3c7fab3489cfae5fce207460ec23fded",
+            "supporting_mentions": [
+              "m11515_11517_person"
+            ]
+          },
+          {
+            "mention_id": "m21248_21250_person",
+            "entity_id": "fa8a2b645f10f7925b0bc5aa07f450fd3c7fab3489cfae5fce207460ec23fded",
+            "supporting_mentions": [
+              "m21248_21250_person"
+            ]
+          },
+          {
+            "mention_id": "m22379_22381_person",
+            "entity_id": "0ce01bcf04f88c9a907a4222ea405604fb5d8ce17eba9bc58dd2c21446153f53",
+            "supporting_mentions": [
+              "m22379_22381_person"
+            ]
+          },
+          {
+            "mention_id": "m52543_52545_person",
+            "entity_id": "fa8a2b645f10f7925b0bc5aa07f450fd3c7fab3489cfae5fce207460ec23fded",
+            "supporting_mentions": [
+              "m52543_52545_person"
+            ]
+          },
+          {
+            "mention_id": "m74199_74201_person",
+            "entity_id": "fa8a2b645f10f7925b0bc5aa07f450fd3c7fab3489cfae5fce207460ec23fded",
+            "supporting_mentions": [
+              "m74199_74201_person"
+            ]
+          },
+          {
+            "mention_id": "m103192_103194_person",
+            "entity_id": "fa8a2b645f10f7925b0bc5aa07f450fd3c7fab3489cfae5fce207460ec23fded",
+            "supporting_mentions": [
+              "m103192_103194_person"
+            ]
+          },
+          {
+            "mention_id": "m115597_115599_person",
+            "entity_id": "fa8a2b645f10f7925b0bc5aa07f450fd3c7fab3489cfae5fce207460ec23fded",
+            "supporting_mentions": [
+              "m115597_115599_person"
+            ]
+          },
+          {
+            "mention_id": "m130609_130613_person",
+            "entity_id": "fa8a2b645f10f7925b0bc5aa07f450fd3c7fab3489cfae5fce207460ec23fded",
+            "supporting_mentions": [
+              "m130609_130613_person"
+            ]
+          },
+          {
+            "mention_id": "m132598_132600_person",
+            "entity_id": "fa8a2b645f10f7925b0bc5aa07f450fd3c7fab3489cfae5fce207460ec23fded",
+            "supporting_mentions": [
+              "m132598_132600_person"
+            ]
+          },
+          {
+            "mention_id": "m160571_160573_person",
+            "entity_id": "fa8a2b645f10f7925b0bc5aa07f450fd3c7fab3489cfae5fce207460ec23fded",
+            "supporting_mentions": [
+              "m160571_160573_person"
+            ]
+          },
+          {
+            "mention_id": "m166960_166962_person",
+            "entity_id": "fa8a2b645f10f7925b0bc5aa07f450fd3c7fab3489cfae5fce207460ec23fded",
+            "supporting_mentions": [
+              "m166960_166962_person"
+            ]
+          },
+          {
+            "mention_id": "m168744_168746_person",
+            "entity_id": "fa8a2b645f10f7925b0bc5aa07f450fd3c7fab3489cfae5fce207460ec23fded",
+            "supporting_mentions": [
+              "m168744_168746_person"
+            ]
+          },
+          {
+            "mention_id": "m172023_172025_person",
+            "entity_id": "fa8a2b645f10f7925b0bc5aa07f450fd3c7fab3489cfae5fce207460ec23fded",
+            "supporting_mentions": [
+              "m172023_172025_person"
+            ]
+          },
+          {
+            "mention_id": "m173558_173560_person",
+            "entity_id": "fa8a2b645f10f7925b0bc5aa07f450fd3c7fab3489cfae5fce207460ec23fded",
+            "supporting_mentions": [
+              "m173558_173560_person"
+            ]
+          },
+          {
+            "mention_id": "m176226_176228_person",
+            "entity_id": "fa8a2b645f10f7925b0bc5aa07f450fd3c7fab3489cfae5fce207460ec23fded",
+            "supporting_mentions": [
+              "m176226_176228_person"
+            ]
+          },
+          {
+            "mention_id": "m184481_184483_person",
+            "entity_id": "fa8a2b645f10f7925b0bc5aa07f450fd3c7fab3489cfae5fce207460ec23fded",
+            "supporting_mentions": [
+              "m184481_184483_person"
+            ]
+          }
+        ]
+      }
+    },
+    "link:15ac46197377cc0a64e6c046": {
+      "input_hash": "528aa25ad17de96c74ba779cf9bfbd4c9896ff4eb653a5808efe8969f38ef58d",
+      "result": {
+        "bindings": [
+          {
+            "mention_id": "m186177_186179_person",
+            "entity_id": "fa8a2b645f10f7925b0bc5aa07f450fd3c7fab3489cfae5fce207460ec23fded",
+            "supporting_mentions": [
+              "m186177_186179_person"
+            ]
+          },
+          {
+            "mention_id": "m187892_187894_person",
+            "entity_id": "fa8a2b645f10f7925b0bc5aa07f450fd3c7fab3489cfae5fce207460ec23fded",
+            "supporting_mentions": [
+              "m187892_187894_person"
+            ]
+          },
+          {
+            "mention_id": "m190997_190999_person",
+            "entity_id": "fa8a2b645f10f7925b0bc5aa07f450fd3c7fab3489cfae5fce207460ec23fded",
+            "supporting_mentions": [
+              "m190997_190999_person"
+            ]
+          },
+          {
+            "mention_id": "m192581_192583_person",
+            "entity_id": "fa8a2b645f10f7925b0bc5aa07f450fd3c7fab3489cfae5fce207460ec23fded",
+            "supporting_mentions": [
+              "m192581_192583_person"
+            ]
+          },
+          {
+            "mention_id": "m195519_195521_person",
+            "entity_id": "fa8a2b645f10f7925b0bc5aa07f450fd3c7fab3489cfae5fce207460ec23fded",
+            "supporting_mentions": [
+              "m195519_195521_person"
+            ]
+          },
+          {
+            "mention_id": "m197190_197192_person",
+            "entity_id": "fa8a2b645f10f7925b0bc5aa07f450fd3c7fab3489cfae5fce207460ec23fded",
+            "supporting_mentions": [
+              "m197190_197192_person"
+            ]
+          },
+          {
+            "mention_id": "m198922_198924_person",
+            "entity_id": "fa8a2b645f10f7925b0bc5aa07f450fd3c7fab3489cfae5fce207460ec23fded",
+            "supporting_mentions": [
+              "m198922_198924_person"
+            ]
+          },
+          {
+            "mention_id": "m200477_200479_person",
+            "entity_id": "fa8a2b645f10f7925b0bc5aa07f450fd3c7fab3489cfae5fce207460ec23fded",
+            "supporting_mentions": [
+              "m200477_200479_person"
+            ]
+          },
+          {
+            "mention_id": "m202051_202053_person",
+            "entity_id": "fa8a2b645f10f7925b0bc5aa07f450fd3c7fab3489cfae5fce207460ec23fded",
+            "supporting_mentions": [
+              "m202051_202053_person"
+            ]
+          },
+          {
+            "mention_id": "m203142_203144_person",
+            "entity_id": "fa8a2b645f10f7925b0bc5aa07f450fd3c7fab3489cfae5fce207460ec23fded",
+            "supporting_mentions": [
+              "m203142_203144_person"
+            ]
+          },
+          {
+            "mention_id": "m204786_204788_person",
+            "entity_id": "fa8a2b645f10f7925b0bc5aa07f450fd3c7fab3489cfae5fce207460ec23fded",
+            "supporting_mentions": [
+              "m204786_204788_person"
+            ]
+          },
+          {
+            "mention_id": "m206534_206536_person",
+            "entity_id": "fa8a2b645f10f7925b0bc5aa07f450fd3c7fab3489cfae5fce207460ec23fded",
+            "supporting_mentions": [
+              "m206534_206536_person"
+            ]
+          },
+          {
+            "mention_id": "m210268_210270_person",
+            "entity_id": "fa8a2b645f10f7925b0bc5aa07f450fd3c7fab3489cfae5fce207460ec23fded",
+            "supporting_mentions": [
+              "m210268_210270_person"
+            ]
+          },
+          {
+            "mention_id": "m211963_211965_person",
+            "entity_id": "fa8a2b645f10f7925b0bc5aa07f450fd3c7fab3489cfae5fce207460ec23fded",
+            "supporting_mentions": [
+              "m211963_211965_person"
+            ]
+          },
+          {
+            "mention_id": "m213546_213548_person",
+            "entity_id": "fa8a2b645f10f7925b0bc5aa07f450fd3c7fab3489cfae5fce207460ec23fded",
+            "supporting_mentions": [
+              "m213546_213548_person"
+            ]
+          },
+          {
+            "mention_id": "m216217_216219_person",
+            "entity_id": "fa8a2b645f10f7925b0bc5aa07f450fd3c7fab3489cfae5fce207460ec23fded",
+            "supporting_mentions": [
+              "m216217_216219_person"
+            ]
+          }
+        ]
+      }
+    },
+    "link:9bc94eed843ac5903cad26b0": {
+      "input_hash": "7d61e07c79f1bb8fc15812738b180ec12cd04cb69ad0e16304d333e1b6a6d8a1",
+      "result": {
+        "bindings": [
+          {
+            "mention_id": "m218092_218094_person",
+            "entity_id": "fa8a2b645f10f7925b0bc5aa07f450fd3c7fab3489cfae5fce207460ec23fded",
+            "supporting_mentions": [
+              "m218092_218094_person"
+            ]
+          },
+          {
+            "mention_id": "m219853_219855_person",
+            "entity_id": "fa8a2b645f10f7925b0bc5aa07f450fd3c7fab3489cfae5fce207460ec23fded",
+            "supporting_mentions": [
+              "m219853_219855_person"
+            ]
+          },
+          {
+            "mention_id": "m221013_221015_person",
+            "entity_id": "fa8a2b645f10f7925b0bc5aa07f450fd3c7fab3489cfae5fce207460ec23fded",
+            "supporting_mentions": [
+              "m221013_221015_person"
+            ]
+          },
+          {
+            "mention_id": "m222596_222598_person",
+            "entity_id": "fa8a2b645f10f7925b0bc5aa07f450fd3c7fab3489cfae5fce207460ec23fded",
+            "supporting_mentions": [
+              "m222596_222598_person"
+            ]
+          },
+          {
+            "mention_id": "m225648_225650_person",
+            "entity_id": "fa8a2b645f10f7925b0bc5aa07f450fd3c7fab3489cfae5fce207460ec23fded",
+            "supporting_mentions": [
+              "m225648_225650_person"
+            ]
+          },
+          {
+            "mention_id": "m225936_225938_person",
+            "entity_id": "fa8a2b645f10f7925b0bc5aa07f450fd3c7fab3489cfae5fce207460ec23fded",
+            "supporting_mentions": [
+              "m225936_225938_person"
+            ]
+          },
+          {
+            "mention_id": "m244871_244873_person",
+            "entity_id": "fa8a2b645f10f7925b0bc5aa07f450fd3c7fab3489cfae5fce207460ec23fded",
+            "supporting_mentions": [
+              "m244871_244873_person"
+            ]
+          },
+          {
+            "mention_id": "m262602_262604_person",
+            "entity_id": "fa8a2b645f10f7925b0bc5aa07f450fd3c7fab3489cfae5fce207460ec23fded",
+            "supporting_mentions": [
+              "m262602_262604_person"
+            ]
+          },
+          {
+            "mention_id": "m282154_282156_person",
+            "entity_id": "fa8a2b645f10f7925b0bc5aa07f450fd3c7fab3489cfae5fce207460ec23fded",
+            "supporting_mentions": [
+              "m282154_282156_person"
+            ]
+          },
+          {
+            "mention_id": "m307861_307863_person",
+            "entity_id": "fa8a2b645f10f7925b0bc5aa07f450fd3c7fab3489cfae5fce207460ec23fded",
+            "supporting_mentions": [
+              "m307861_307863_person"
+            ]
+          },
+          {
+            "mention_id": "m393367_393369_person",
+            "entity_id": "fa8a2b645f10f7925b0bc5aa07f450fd3c7fab3489cfae5fce207460ec23fded",
+            "supporting_mentions": [
+              "m393367_393369_person"
+            ]
+          },
+          {
+            "mention_id": "m674745_674747_person",
+            "entity_id": "da54fbb9fa2683a2964976733b9f9ca2842909e5cd415b6c674655ee0351707e",
+            "supporting_mentions": [
+              "m674745_674747_person"
+            ]
+          },
+          {
+            "mention_id": "m690883_690885_person",
+            "entity_id": "da54fbb9fa2683a2964976733b9f9ca2842909e5cd415b6c674655ee0351707e",
+            "supporting_mentions": [
+              "m690883_690885_person"
+            ]
+          },
+          {
+            "mention_id": "m755931_755933_person",
+            "entity_id": "da54fbb9fa2683a2964976733b9f9ca2842909e5cd415b6c674655ee0351707e",
+            "supporting_mentions": [
+              "m755931_755933_person"
+            ]
+          },
+          {
+            "mention_id": "m769734_769736_person",
+            "entity_id": "da54fbb9fa2683a2964976733b9f9ca2842909e5cd415b6c674655ee0351707e",
+            "supporting_mentions": [
+              "m769734_769736_person"
+            ]
+          },
+          {
+            "mention_id": "m780717_780719_person",
+            "entity_id": "da54fbb9fa2683a2964976733b9f9ca2842909e5cd415b6c674655ee0351707e",
+            "supporting_mentions": [
+              "m780717_780719_person"
+            ]
+          }
+        ]
+      }
+    },
+    "link:fb294185fd23158b004f04f6": {
+      "input_hash": "6b0e78d1130281cd8ea067dcaa67eae3bbb75d0efb30e686946f92bdb609eba4",
+      "result": {
+        "bindings": [
+          {
+            "mention_id": "m789304_789306_person",
+            "entity_id": "da54fbb9fa2683a2964976733b9f9ca2842909e5cd415b6c674655ee0351707e",
+            "supporting_mentions": [
+              "m789304_789306_person"
+            ]
+          },
+          {
+            "mention_id": "m797084_797086_person",
+            "entity_id": "da54fbb9fa2683a2964976733b9f9ca2842909e5cd415b6c674655ee0351707e",
+            "supporting_mentions": [
+              "m797084_797086_person"
+            ]
+          },
+          {
+            "mention_id": "m813337_813339_person",
+            "entity_id": "fa8a2b645f10f7925b0bc5aa07f450fd3c7fab3489cfae5fce207460ec23fded",
+            "supporting_mentions": [
+              "m813337_813339_person"
+            ]
+          },
+          {
+            "mention_id": "m815807_815809_person",
+            "entity_id": "fa8a2b645f10f7925b0bc5aa07f450fd3c7fab3489cfae5fce207460ec23fded",
+            "supporting_mentions": [
+              "m815807_815809_person"
+            ]
+          }
+        ]
+      }
+    },
+    "audit:binding:15752a8f57ec32913bfce7b3": {
+      "input_hash": "443c36f7efeec5c1b7560f0a508e9b31a655171dc85de589a1137b758c6c77b3",
+      "result": {
+        "bindings": [
+          {
+            "mention_id": "m815807_815809_person",
+            "entity_id": "748095a6c2fb66293533bd052d9d815ce81cd9fd73c89394c0243a2a653249f9",
+            "supporting_mentions": [
+              "m815807_815809_person",
+              "m815959_815962_person"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "expected_metrics": {
+    "mentions": 500,
+    "identity_count": 30,
+    "fact_candidates": 100,
+    "coverage": 1.0,
+    "binding_accuracy": 1.0,
+    "cluster_precision": 1.0,
+    "cluster_recall": 1.0,
+    "false_merge_clusters": 0,
+    "split_identities": 0,
+    "fact_endpoint_accuracy": 1.0,
+    "critical": {
+      "林黛玉": {
+        "mentions": 35,
+        "resolved": 35,
+        "clusters": 1,
+        "passed": true
+      },
+      "贾宝玉": {
+        "mentions": 45,
+        "resolved": 45,
+        "clusters": 1,
+        "passed": true
+      },
+      "甄宝玉": {
+        "mentions": 6,
+        "resolved": 6,
+        "clusters": 1,
+        "passed": true
+      }
+    },
+    "critical_aliases": {
+      "黛玉": {
+        "expected": [
+          "林黛玉"
+        ],
+        "actual": [
+          "林黛玉"
+        ],
+        "passed": true
+      },
+      "林黛玉": {
+        "expected": [
+          "林黛玉"
+        ],
+        "actual": [
+          "林黛玉"
+        ],
+        "passed": true
+      },
+      "林妹妹": {
+        "expected": [
+          "林黛玉"
+        ],
+        "actual": [
+          "林黛玉"
+        ],
+        "passed": true
+      },
+      "宝玉": {
+        "expected": [
+          "甄宝玉",
+          "贾宝玉"
+        ],
+        "actual": [
+          "甄宝玉",
+          "贾宝玉"
+        ],
+        "passed": true
+      },
+      "宝玉哥哥": {
+        "expected": [
+          "贾宝玉"
+        ],
+        "actual": [
+          "贾宝玉"
+        ],
+        "passed": true
+      },
+      "贾宝玉": {
+        "expected": [
+          "贾宝玉"
+        ],
+        "actual": [
+          "贾宝玉"
+        ],
+        "passed": true
+      },
+      "甄宝玉": {
+        "expected": [
+          "甄宝玉"
+        ],
+        "actual": [
+          "甄宝玉"
+        ],
+        "passed": true
+      }
+    },
+    "pending_mentions": 0,
+    "passed": true
+  }
+}

@@ -9,7 +9,7 @@ import argparse
 import json
 import time
 
-from novel_agent.corpus.knowledge_graph.resolution import resolve
+from novel_agent.corpus.knowledge_graph.catalog import build_catalog
 
 
 def fixture():
@@ -26,7 +26,7 @@ def fixture():
     return batches
 
 
-def run(batches, batch_size, delay):
+def run(batches, workers, delay):
     requests, saved = 0, {}
 
     def checkpoint(uid, fingerprint, result=None, sequence=0):
@@ -36,28 +36,23 @@ def run(batches, batch_size, delay):
             assert saved[uid][0] == fingerprint
             return saved[uid][1]
 
-    def decision(entry):
-        candidate = entry["candidates"][0]
-        return {"decision": "merge", "candidate_id": candidate["candidate_id"],
-                "supporting_mentions": [entry["entity"]["excerpts"][0]["mention_id"],
-                                        candidate["excerpts"][0]["mention_id"]]}
-
     def invoke(uid, schema, prompt, payload):
         nonlocal requests
         requests += 1
         time.sleep(delay)
-        value = {"decisions": [{"entity_ref": e["entity_ref"], **decision(e)} for e in payload["entities"]]} if "entities" in payload else decision(payload)
+        value = {"profiles": [{"anchor_mention_id": card["excerpts"][0]["mention_id"],
+            "canonical_name": card["name"], "name_forms": [{"name": card["name"]}],
+            "supporting_mentions": [card["excerpts"][0]["mention_id"]]} for card in payload["cards"]]}
         return schema.model_validate(value)
 
     started = time.monotonic()
-    result = resolve(batches, "benchmark", invoke, checkpoint, lambda _: None,
-                     batch_size=batch_size, concurrency=4)
+    result = build_catalog(batches, "benchmark", invoke, checkpoint, lambda _: None, concurrency=workers)
     elapsed = time.monotonic() - started
-    assert len(result[0]) == 4 and all(len(e["mentions"]) == 65 for e in result[0])
-    assert resolve(batches, "benchmark", lambda *_: (_ for _ in ()).throw(AssertionError("replay called model")),
-                   checkpoint, lambda _: None, batch_size=batch_size, concurrency=1) == result
-    return result, {"batch_size": batch_size, "requests": requests, "elapsed_seconds": elapsed,
-                    "entity_count": len(result[0]), "mention_count": sum(len(e["mentions"]) for e in result[0])}
+    assert len(result.entities) == 4 and all(len(e["mentions"]) == 65 for e in result.entities)
+    assert build_catalog(batches, "benchmark", lambda *_: (_ for _ in ()).throw(AssertionError("replay called model")),
+                         checkpoint, lambda _: None, concurrency=1) == result
+    return result, {"workers": workers, "requests": requests, "elapsed_seconds": elapsed,
+                    "entity_count": len(result.entities), "mention_count": sum(len(e["mentions"]) for e in result.entities)}
 
 
 def main():
@@ -68,13 +63,14 @@ def main():
         parser.error("--delay must be between 0 and 1 second")
     batches = fixture()
     single_result, single = run(batches, 1, args.delay)
-    batch_result, batched = run(batches, 16, args.delay)
+    batch_result, batched = run(batches, 4, args.delay)
     assert batch_result == single_result
-    reduction = 1 - batched["requests"] / single["requests"]
+    reduction = 1 - batched["requests"] / (4 * 64)
     assert reduction >= 0.7
     print(json.dumps({"fixture": "4 people, 65 anchored occurrences each; no network",
-                      "simulated_request_seconds": args.delay, "single": single, "batched": batched,
-                      "request_reduction": reduction, "speedup": single["elapsed_seconds"] / batched["elapsed_seconds"]}, indent=2))
+                      "simulated_request_seconds": args.delay, "serial_catalog": single, "concurrent_catalog": batched,
+                      "legacy_per_occurrence_requests": 4 * 64, "request_reduction": reduction,
+                      "speedup": single["elapsed_seconds"] / batched["elapsed_seconds"]}, indent=2))
 
 
 if __name__ == "__main__":

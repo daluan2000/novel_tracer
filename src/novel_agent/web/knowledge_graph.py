@@ -58,6 +58,12 @@ def graph_router(service):
                  startChapterId: str | None = None, endChapterId: str | None = None):
         return call(lambda: reader(novel_id, version).search(q, type, offset, limit, **scope(novel_id, startChapterId, endChapterId)))
 
+    @router.get("/unresolved")
+    def unresolved(novel_id: str, version: str = Query(min_length=1, max_length=64),
+                   offset: int = Query(0, ge=0), limit: int = Query(20, ge=1, le=100),
+                   startChapterId: str | None = None, endChapterId: str | None = None):
+        return call(lambda: reader(novel_id, version).unresolved(offset, limit, **scope(novel_id, startChapterId, endChapterId)))
+
     @router.get("/entities/{entity_id}")
     def entity(novel_id: str, entity_id: str, version: str = Query(min_length=1, max_length=64),
                offset: int = Query(0, ge=0), limit: int = Query(20, ge=1, le=100),

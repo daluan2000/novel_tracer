@@ -19,6 +19,8 @@ def bounded_payload(payload: dict, budget: int = 12000) -> str:
             payload["edges"] = [e for e in payload["edges"] if e["id"] in used]
         elif payload.get("edges"):
             payload["edges"].pop()
+        elif payload.get("identity_evidence"):
+            payload["identity_evidence"].pop()
         elif payload.get("items"):
             payload["items"].pop()
         elif payload.get("nodes"):
@@ -45,7 +47,7 @@ def build_graph_tools(reader):
             start_section_id=start_section_id, end_section_id=end_section_id))
 
     def get_graph_entity(entity_id: str) -> str:
-        """查询已选实体的主名称、aliases 全部别名及前8处原文提及。"""
+        """查询实体规范名称、名称类别、别名、身份依据及前8处原文提及。"""
         return run(lambda: reader.entity(entity_id, limit=8))
 
     def get_graph_relations(entity_id: str, depth: int = 1, entity_types: list[str] | None = None,

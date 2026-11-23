@@ -9,7 +9,7 @@ import type {
   SearchHit,
   SectionPage,
 } from './types'
-import type { GraphFilters, GraphGroup, GraphNode, GraphPage, GraphResult, GraphStatus, GraphJob } from './graphTypes'
+import type { GraphFilters, GraphGroup, GraphNode, GraphPage, GraphResult, GraphStatus, GraphJob, GraphUnresolved } from './graphTypes'
 
 export class ApiError extends Error {
   constructor(
@@ -48,6 +48,8 @@ function graphParams(version: string, filters: GraphFilters = {}, extra: Record<
 }
 const graphBase = (id: string) => `/api/novels/${encodeURIComponent(id)}/graph`
 export const graphApi = {
+  unresolved: (id: string, version: string, filters: GraphFilters, offset = 0) => request<GraphPage<GraphUnresolved>>(
+    `${graphBase(id)}/unresolved?${graphParams(version, filters, { offset: String(offset) })}`),
   status: (id: string, signal?: AbortSignal) => request<GraphStatus>(`${graphBase(id)}/status`, { signal }),
   build: (id: string, mode: 'start' | 'resume' | 'rebuild', jobId?: string) => request<GraphJob>(`${graphBase(id)}/builds`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode, ...(jobId ? { job_id: jobId } : {}) }),

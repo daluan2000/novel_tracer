@@ -19,7 +19,7 @@ from novel_agent.corpus.knowledge_graph.models import Anchor, ExtractionBatch, G
 from novel_agent.corpus.knowledge_graph.query import GraphReadSession
 from novel_agent.corpus.knowledge_graph.storage import GraphStorage, encode, now
 from novel_agent.corpus.knowledge_graph.resolution import resolve
-from novel_agent.corpus.knowledge_graph.models import BatchResolutionDecision, ResolutionDecision
+from novel_agent.corpus.knowledge_graph.models import BatchResolutionDecision, CatalogDecision, ResolutionDecision
 from novel_agent.web.app import create_app
 
 
@@ -34,6 +34,21 @@ def scripted_merge(payload):
     refs = (payload.get("identity_excerpts", []) or payload["entity"]["excerpts"])
     return {"decision": "merge", "candidate_id": candidate["candidate_id"],
             "supporting_mentions": list(dict.fromkeys([refs[0]["mention_id"], candidate["excerpts"][0]["mention_id"]]))}
+
+
+def scripted_catalog(payload):
+    cards = {c["name"]: c for c in payload["cards"]}
+    groups = []
+    for canonical, aliases in [("张三", ["阿三"]), ("孙悟空", ["悟空", "孙大圣", "齐天大圣"])]:
+        selected = [name for name in [canonical, *aliases] if name in cards]
+        if selected:
+            groups.append((canonical if canonical in selected else selected[0], selected))
+    covered = {name for _, names in groups for name in names}
+    groups.extend((name, [name]) for name in cards if name not in covered)
+    return {"profiles": [{"anchor_mention_id": cards[canonical]["excerpts"][0]["mention_id"],
+        "canonical_name": canonical, "name_forms": [{"name": name, "kind": "proper_name"} for name in names],
+        "supporting_mentions": [cards[name]["excerpts"][0]["mention_id"] for name in names]}
+        for canonical, names in groups]}
 
 
 class ScriptModel:
@@ -55,6 +70,8 @@ class ScriptModel:
                 raise TimeoutError("provider-secret-must-not-leak")
             if schema in (ResolutionDecision, BatchResolutionDecision):
                 return scripted_merge(payload)
+            if schema is CatalogDecision:
+                return scripted_catalog(payload)
             core = next(s["text"] for s in payload["spans"] if s["span_id"] == "core")
             def anchor(text):
                 return {"span_id": "core", "quote": text, "occurrence": 1}
@@ -449,7 +466,7 @@ def test_multiple_aliases_build_search_details_and_relations(tmp_path, monkeypat
             + "山路悠长，风吹过树梢。" * 35)
     class AliasModel(ScriptModel):
         def with_structured_output(self, schema, **kwargs):
-            if schema in (ResolutionDecision, BatchResolutionDecision):
+            if schema in (ResolutionDecision, BatchResolutionDecision, CatalogDecision):
                 return super().with_structured_output(schema, **kwargs)
             def invoke(messages):
                 core = json.loads(messages[1].content)["spans"][0]["text"]

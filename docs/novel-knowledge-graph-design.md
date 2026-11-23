@@ -5,6 +5,8 @@
 - 分支：`feat/novel-knowledge-graph`。
 - 需求依据：[小说图知识库需求文档 V1](./novel-knowledge-graph-requirements.md)。
 
+> 2026-11-23：生成流程已改为提及与事实候选、全书身份目录、提及绑定及复核、关系回填；数据库 Schema 3。下文保留 V1 设计背景，当前生成实现及验收以[身份目录架构](./knowledge-graph-identity-catalog.md)为准。
+
 ## 1. 设计概要
 
 采用“现有分块 + 大模型抽取 + 保守实体归并 + SQLite 版本化存储 + 有界图遍历”的实现。图谱是小说的派生索引；现有 BM25、Embedding、章节与原文读取继续独立工作。

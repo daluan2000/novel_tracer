@@ -1,5 +1,6 @@
 """Wire-format guidance, independent of semantic extraction rules/checkpoints."""
-from .models import BatchResolutionDecision, CompactExtractionBatch, ExtractionBatch, ResolutionDecision
+from .models import (BatchResolutionDecision, CatalogDecision, CompactExtractionBatch,
+                     ExtractionBatch, MentionBindingBatch, ResolutionDecision)
 
 
 _COMMON = """输出格式检查（提交前逐项核对）：
@@ -33,6 +34,18 @@ span_id 是输入 segments 中实际存在的 id，不是 region 值 core/before
 
 
 def output_contract(schema: type) -> str:
+    if schema is CatalogDecision:
+        return """调用 CatalogDecision，参数为一个 JSON 对象 {"profiles":[...]}。
+每个 profile 使用 anchor_mention_id、canonical_name、name_forms、supporting_mentions，
+可选 person_name={"family_name":...,"given_name":...} 和 description。
+name_forms 是 {"name":原文名称,"kind":"full_name|given_name|address|alias|proper_name"} 对象数组，kind 填单个枚举。
+所有名称和 mention_id 必须来自输入 cards；没有足够依据返回 {"profiles":[]}。
+supporting_mentions 最多24项：每种名称只选1处最清晰依据，并包含 anchor_mention_id。
+不要逐条列出所有提及，不要复制整章的编号清单；重复编号只写一次。"""
+    if schema is MentionBindingBatch:
+        return """调用 MentionBindingBatch，参数为 {"bindings":[...]}。
+每条为 {"mention_id":输入编号,"entity_id":候选编号或null,"supporting_mentions":[输入证据编号]}。
+每个输入提及返回一次；不确定用 entity_id=null，不能创造新候选。"""
     if schema is ExtractionBatch:
         return _COMMON + "\n" + _FULL
     if schema is CompactExtractionBatch:
