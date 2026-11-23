@@ -19,7 +19,13 @@
     {"id":"homonym05","text":"大宋年间有个赵远。两百年后又有一个赵远，两个人仅仅同名。","left":"赵远","right":"赵远","right_occurrence":2,"same":false},
     {"id":"homonym06","text":"陶师傅名叫王和。另一位王和是渔夫，两位王和各自生活，从未互换身份。","left":"王和","right":"王和","right_occurrence":2,"same":false},
     {"id":"homonym07","text":"姐姐名叫刘青。妹妹也名叫刘青，两位刘青是两个不同的人。","left":"刘青","right":"刘青","right_occurrence":2,"same":false},
-    {"id":"homonym08","text":"学者孙明在京都。另一个孙明是边城铁匠，这两个孙明没有同一身份。","left":"孙明","right":"孙明","right_occurrence":2,"same":false}
+    {"id":"homonym08","text":"学者孙明在京都。另一个孙明是边城铁匠，这两个孙明没有同一身份。","left":"孙明","right":"孙明","right_occurrence":2,"same":false},
+    {"id":"dialogue01","text":"茜雪捧上茶来，宝玉因让林妹妹吃茶。林妹妹本名林黛玉。","left":"宝玉","right":"林黛玉","same":false},
+    {"id":"dialogue02","text":"那人问宝玉：“故人是谁？”宝玉道：“姑苏林黛玉。”","left":"宝玉","right":"姑苏林黛玉","same":false},
+    {"id":"dialogue03","text":"黛玉看着宝玉，说道：“林妹妹就是我。”宝玉点头。","left":"黛玉","right":"宝玉","same":false},
+    {"id":"copresent01","text":"宝玉和黛玉二人同行同坐，亲密友爱。","left":"宝玉","right":"黛玉","same":false},
+    {"id":"impersonation01","text":"林岚站在台下。沈砚假冒林岚，声称自己又名林岚，两人并非一人。","left":"林岚","right":"沈砚","same":false},
+    {"id":"negation01","text":"青岚不是林岚。青岚和林岚二人在城门相遇。","left":"青岚","right":"林岚","same":false}
   ],
   "relation_cases": [
     {"id":"r01","text":"林岚拜沈砚为师。","source":"林岚","target":"沈砚","type":"disciple_of"},
@@ -52,5 +58,13 @@
     {"id":"r28","text":"陆遥说：“温晴是我的女儿。”","source":"陆遥","target":"温晴","type":"parent_of","statement_mode":"character_claim"},
     {"id":"r29","text":"许星自称：“我是苍山派成员。”","source":"许星","target":"苍山派","type":"member_of","statement_mode":"character_claim"},
     {"id":"r30","text":"沈砚说：“青云剑由我持有。”","source":"沈砚","target":"青云剑","type":"possesses","statement_mode":"character_claim"}
+  ],
+  "selection_cases": [
+    {"id":"select01","text":"张三拿起茶杯喝水，随后放下。","keep":["张三"],"remove":["茶杯"]},
+    {"id":"select02","text":"张三走过后巷，随即离城，再也没回去。","keep":["张三"],"remove":["后巷"]},
+    {"id":"select03","text":"血玉是解开皇位继承秘密的唯一信物，张三拼死将血玉交给皇帝。","keep":["张三","血玉"],"remove":[]},
+    {"id":"select04","text":"断魂崖是张三与宿敌决战并终结两派世仇的地方。","keep":["张三","断魂崖"],"remove":[]},
+    {"id":"select05","text":"张三到青松镇安家。后来张三在青松镇开店。数年后，青松镇成了张三的故乡。","keep":["张三","青松镇"],"remove":[]},
+    {"id":"select06","text":"姑娘向哥儿借了一把椅子。","keep":[],"remove":["姑娘","哥儿","椅子"]}
   ]
 }

@@ -21,6 +21,11 @@ export interface GraphResult extends GraphMeta {
   nodes: GraphNode[]; edges: GraphEdge[]; paths: Array<{ node_ids: string[]; edge_ids: string[] }>
 }
 export interface GraphPage<T> extends GraphMeta { items: T[]; offset: number; limit: number; total: number }
+export interface GraphQualityStats {
+  candidates_before: Record<string, number>; candidates_after: Record<string, number>
+  entities_after?: Record<string, number>; filtered_reasons: Record<string, number>
+  minimum_mentions: number; ambiguous_count: number; identity_rejected_count: number; batch_request_count: number
+}
 export interface GraphJob {
   job_id: string; graph_version: string
   status: 'queued' | 'building' | 'stopping' | 'completed' | 'failed' | 'stopped'
@@ -30,6 +35,7 @@ export interface GraphJob {
   entity_count: number; relation_count: number; elapsed_seconds: number
   phase_elapsed_seconds?: Partial<Record<GraphJob['phase'], number>>
   phase_model_seconds?: Partial<Record<GraphJob['phase'], number>>
+  quality_stats?: GraphQualityStats | null
   usage: { request_count: number; reported_input_tokens: number; reported_output_tokens: number; unknown_request_count: number; failed_request_count: number }
   events: Array<{ code: string; level: string; created_at: string }>
 }

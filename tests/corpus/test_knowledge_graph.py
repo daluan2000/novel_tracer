@@ -19,11 +19,21 @@ from novel_agent.corpus.knowledge_graph.models import Anchor, ExtractionBatch, G
 from novel_agent.corpus.knowledge_graph.query import GraphReadSession
 from novel_agent.corpus.knowledge_graph.storage import GraphStorage, encode, now
 from novel_agent.corpus.knowledge_graph.resolution import resolve
-from novel_agent.corpus.knowledge_graph.models import ResolutionDecision
+from novel_agent.corpus.knowledge_graph.models import BatchResolutionDecision, ResolutionDecision
 from novel_agent.web.app import create_app
 
 
-TEXT = "第一章 拜师\r\n\r\n张三拜李四为师。张三又名阿三。李四持有青云剑。\r\n" + "山路悠长，风吹过树梢。" * 35 + "\r\n第二章 重逢\r\n\r\n张三与李四再度相遇。阿三并非李四的弟子。\r\n" + "山路悠长，风吹过树梢。" * 35
+TEXT = "第一章 拜师\r\n\r\n张三拜李四为师。张三又名阿三。李四持有青云剑。青云剑是开启秘境的唯一信物。\r\n" + "山路悠长，风吹过树梢。" * 35 + "\r\n第二章 重逢\r\n\r\n张三与李四再度相遇。阿三并非李四的弟子。\r\n" + "山路悠长，风吹过树梢。" * 35
+
+
+def scripted_merge(payload):
+    """Fixed identity-positive model for the authored single-person fixtures."""
+    if "entities" in payload:
+        return {"decisions": [{"entity_ref": entry["entity_ref"], **scripted_merge(entry)} for entry in payload["entities"]]}
+    candidate = payload["candidates"][0]
+    refs = (payload.get("identity_excerpts", []) or payload["entity"]["excerpts"])
+    return {"decision": "merge", "candidate_id": candidate["candidate_id"],
+            "supporting_mentions": list(dict.fromkeys([refs[0]["mention_id"], candidate["excerpts"][0]["mention_id"]]))}
 
 
 class ScriptModel:
@@ -43,15 +53,16 @@ class ScriptModel:
                 assert self.release.wait(5)
             if self.fail_at == len(self.calls):
                 raise TimeoutError("provider-secret-must-not-leak")
-            if schema.__name__ == "ResolutionDecision":
-                candidate = payload["candidates"][0]
-                return {"decision": "merge", "candidate_id": candidate["candidate_id"],
-                        "supporting_mentions": [(payload["identity_excerpts"] or payload["entity"]["excerpts"])[0]["mention_id"]]}
+            if schema in (ResolutionDecision, BatchResolutionDecision):
+                return scripted_merge(payload)
             core = next(s["text"] for s in payload["spans"] if s["span_id"] == "core")
             def anchor(text):
                 return {"span_id": "core", "quote": text, "occurrence": 1}
             entities = [{"local_id": name, "name": name, "type": "item" if name == "青云剑" else "person", "mentions": [anchor(name)]}
                         for name in ("张三", "李四", "阿三", "青云剑") if name in core]
+            for entity in entities:
+                if entity["name"] == "青云剑":
+                    entity.update(plot_relevant=True, importance_evidence=[anchor("青云剑是开启秘境的唯一信物。")])
             relations, links = [], []
             if "张三拜李四为师。" in core:
                 relations.append({"source": "张三", "target": "李四", "type": "disciple_of", "evidence": [anchor("张三拜李四为师。")]} )
@@ -95,6 +106,11 @@ def test_build_query_alias_evidence_and_agent_tools(tmp_path, monkeypatch):
         assert job.status_code == 202
         status = wait_job(client, novel)
         version = status["active_version"]
+        quality = status["job"]["quality_stats"]
+        assert quality["candidates_before"]["item"] == quality["candidates_after"]["item"] == 1
+        assert quality["entities_after"]["item"] == 1
+        assert quality["batch_request_count"] > 0
+        assert quality["minimum_mentions"] == 3
         search = client.get(base + "/entities", params={"version": version, "q": "阿三"}).json()
         assert len(search["items"]) == 1
         assert search["items"][0]["name"] == "张三"
@@ -322,7 +338,7 @@ def test_resolution_keeps_homonyms_separate_with_distinguishing_evidence():
 
 
 @pytest.mark.parametrize("decision", ["ambiguous", "new", "invalid_merge", "invalid_new"])
-def test_same_name_uncertainty_reuses_existing_entity_and_all_relations(decision):
+def test_same_name_uncertainty_keeps_entities_and_their_relations_separate(decision):
     def batch(index, name="祥子"):
         position = index * 1000
         mention = {"start_char": position, "end_char": position + len(name), "quote": name, "section_id": str(index)}
@@ -350,15 +366,15 @@ def test_same_name_uncertainty_reuses_existing_entity_and_all_relations(decision
             assert saved[uid][0] == fingerprint
             return saved[uid][1]
     entities, relations = resolve([batch(i) for i in range(4)], "v", invoke, checkpoint, events.append)
-    assert len(entities) == 2
-    xiangzi = next(e for e in entities if e["name"] == "祥子")
-    assert len(xiangzi["mentions"]) == 4
-    assert len(relations) == 1 and len(relations[0]["groups"]) == 4
+    assert len(entities) == 8
+    assert len([e for e in entities if e["name"] == "祥子"]) == 4
+    assert all(len(e["mentions"]) == 1 for e in entities)
+    assert len(relations) == 4 and all(len(r["groups"]) == 1 for r in relations)
     # The latest narrative context must accompany the title, rather than only
     # repeating the first two excerpts throughout the entire novel.
     last = [p for p in payloads if p["entity"]["name"] == "祥子"][-1]
-    assert "夏太太叫祥子去买栗子。" in [m["quote"] for m in last["candidates"][0]["excerpts"]]
-    assert "entity_same_name_reused" in events
+    assert any("夏太太叫祥子去买栗子。" in [m["quote"] for m in c["excerpts"]] for c in last["candidates"])
+    assert "entity_same_name_reused" not in events
     replay = resolve([batch(i) for i in range(4)], "v", lambda *_: pytest.fail("checkpoint called model"), checkpoint, lambda *_: None)
     assert replay == (entities, relations)
 
@@ -427,13 +443,13 @@ def test_alias_link_requires_identity_evidence_for_merge(decision):
 def test_multiple_aliases_build_search_details_and_relations(tmp_path, monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     names = ["孙悟空", "悟空", "孙大圣", "齐天大圣"]
-    text = ("第一章 相逢\n孙悟空持有金箍棒。悟空拜唐僧为师。孙大圣认识唐僧。齐天大圣使用金箍棒。\n"
+    text = ("第一章 相逢\n孙悟空持有金箍棒。金箍棒是降伏妖王的关键兵器。悟空拜唐僧为师。孙大圣认识唐僧。齐天大圣使用金箍棒。\n"
             + "山路悠长，风吹过树梢。" * 35
             + "\n第二章 身份\n孙悟空又称悟空。孙悟空又称孙大圣。孙悟空又称齐天大圣。\n"
             + "山路悠长，风吹过树梢。" * 35)
     class AliasModel(ScriptModel):
         def with_structured_output(self, schema, **kwargs):
-            if schema is ResolutionDecision:
+            if schema in (ResolutionDecision, BatchResolutionDecision):
                 return super().with_structured_output(schema, **kwargs)
             def invoke(messages):
                 core = json.loads(messages[1].content)["spans"][0]["text"]
@@ -441,6 +457,9 @@ def test_multiple_aliases_build_search_details_and_relations(tmp_path, monkeypat
                     return {"span_id": "core", "quote": quote}
                 entities = [{"local_id": name, "name": name, "type": "item" if name == "金箍棒" else "person",
                              "mentions": [anchor(name)]} for name in [*names, "唐僧", "金箍棒"] if name in core]
+                for entity in entities:
+                    if entity["name"] == "金箍棒":
+                        entity.update(plot_relevant=True, importance_evidence=[anchor("金箍棒是降伏妖王的关键兵器。")])
                 links = [{"source": "孙悟空", "target": name, "evidence": [anchor(f"孙悟空又称{name}。")]}
                          for name in names[1:] if f"孙悟空又称{name}。" in core]
                 relations = [{"source": source, "target": target, "type": kind, "evidence": [anchor(quote)]}
@@ -503,7 +522,8 @@ def test_oversized_extraction_splits_and_publishes_empty_graph(tmp_path, monkeyp
         assert status["job"]["extraction"]["completed"] == status["job"]["extraction"]["total"]
 
 
-def test_fingerprint_mismatch_blocks_resume_but_model_change_keeps_published_graph(tmp_path, monkeypatch):
+@pytest.mark.parametrize("setting,value", [("MODEL_NAME", "different-model"), ("NOVEL_AGENT_GRAPH_MIN_ENTITY_MENTIONS", "4")])
+def test_fingerprint_changes_block_resume_but_keep_published_graph(tmp_path, monkeypatch, setting, value):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setenv("NOVEL_AGENT_GRAPH_REQUEST_RETRIES", "0")
     model = ScriptModel()
@@ -515,7 +535,7 @@ def test_fingerprint_mismatch_blocks_resume_but_model_change_keeps_published_gra
         model.fail_at = len(model.calls) + 1
         client.post(base + "/builds", json={"mode": "rebuild"})
         job = wait_job(client, novel, "failed")["job"]
-        monkeypatch.setenv("MODEL_NAME", "different-model")
+        monkeypatch.setenv(setting, value)
         response = client.post(base + "/builds", json={"mode": "resume", "job_id": job["job_id"]})
         assert response.json()["code"] == "graph_fingerprint_changed"
         monkeypatch.setenv("OPENAI_API_KEY", "")

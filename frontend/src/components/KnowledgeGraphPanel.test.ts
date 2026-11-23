@@ -36,6 +36,9 @@ describe('KnowledgeGraphPanel', () => {
         resolution: { completed: 16, total: 16 }, entity_count: 4, relation_count: 2, elapsed_seconds: 10,
         phase_elapsed_seconds: { extracting: 3.2, resolving: 6.5 },
         phase_model_seconds: { extracting: 12.1, resolving: 23.4 },
+        quality_stats: { candidates_before: { person: 12, item: 20 }, candidates_after: { person: 12, item: 2 },
+          entities_after: { person: 3, item: 1 }, filtered_reasons: { low_frequency_background: 18 },
+          minimum_mentions: 3, ambiguous_count: 2, identity_rejected_count: 4, batch_request_count: 5 },
         usage: { request_count: 20, reported_input_tokens: 100, reported_output_tokens: 100,
           unknown_request_count: 0, failed_request_count: 1 },
         events: [{ code: 'graph_model_rate_limit_retry', level: 'warning', created_at: '' }],
@@ -50,6 +53,11 @@ describe('KnowledgeGraphPanel', () => {
     expect(wrapper.text()).toContain('并发时可大于实际耗时')
     expect(wrapper.text()).toContain('正在等待后重试')
     expect(wrapper.text()).not.toContain('graph_model_rate_limit_retry')
+    expect(wrapper.text()).toContain('物品：候选记录 20 → 2 · 最终实体 1')
+    expect(wrapper.text()).toContain('低频背景实体：过滤 18 项')
+    expect(wrapper.text()).toContain('拒绝身份线索 4 条')
+    expect(wrapper.text()).toContain('身份不确定 2 次')
+    expect(wrapper.text()).toContain('批量消歧请求 5 次')
     wrapper.unmount()
   })
   it('shows all aliases in search candidates and selected entities for both path endpoints', async () => {

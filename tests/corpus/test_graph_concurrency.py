@@ -122,7 +122,7 @@ def test_parallel_resolution_matches_serial_payloads_checkpoints_and_replay():
             if len(payload["candidates"]) > 1:
                 return ResolutionDecision(decision="ambiguous")
             return ResolutionDecision(decision="merge", candidate_id=payload["candidates"][0]["candidate_id"],
-                                      supporting_mentions=[refs[0]["mention_id"]])
+                                      supporting_mentions=[refs[0]["mention_id"], payload["candidates"][0]["excerpts"][0]["mention_id"]])
 
         def checkpoint(uid, fingerprint, result=None, sequence=0):
             with lock:

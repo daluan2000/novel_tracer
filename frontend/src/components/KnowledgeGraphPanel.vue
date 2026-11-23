@@ -47,6 +47,15 @@ const eventLabels: Record<string, string> = {
   graph_model_output_limit: '模型响应达到输出上限，未形成完整结果',
   graph_model_timeout: '模型请求超时',
   structured_output_retry: '模型返回格式不完整，正在重试',
+  entity_identity_ambiguous: '身份依据不足，已保留为独立实体',
+  entity_identity_evidence_rejected: '身份线索缺少明确同一身份依据，已拒绝合并',
+  entity_identity_conflict_rejected: '身份线索与已明确区分的人物冲突，已拒绝合并',
+  graph_resolution_batch_split: '消歧批次超时或输出达到上限，已拆小并保存进度',
+}
+const quality = computed(() => status.value?.job?.quality_stats)
+const filterLabels: Record<string, string> = {
+  generic_name: '泛化称谓', low_frequency_background: '低频背景实体', identity_evidence: '缺少明确身份依据的线索',
+  low_frequency_after_resolution: '归并后仍低频的背景实体',
 }
 function eventLabel(code: string) {
   if (eventLabels[code]) return eventLabels[code]
@@ -183,6 +192,13 @@ onBeforeUnmount(() => { disposed = true; chapterSequence++; evidenceSequence++; 
         <small v-if="status.job.usage.unknown_request_count">超时或供应商未返回用量的请求无法统计 token，可能已产生消耗；继续构建会复用已完成批次。</small>
         <p v-if="status.job.error_code" role="alert">{{ buildErrors[status.job.error_code] || '构建未能完成，已保存进度。请检查模型配置后继续构建。' }}</p>
       </div>
+      </details>
+      <details v-if="quality"><summary>实体筛选与身份校验</summary>
+        <p>地点、物品、功法及概念默认至少保留 {{ quality.minimum_mentions }} 处已定位提及，低频但有剧情重要性依据的实体仍可保留。人物和组织不按频次删除。</p>
+        <ul><li v-for="(count, type) in quality.candidates_before" :key="type">{{ typeLabels[type] || type }}：候选记录 {{ count }} → {{ quality.candidates_after[type] || 0 }}<template v-if="quality.entities_after"> · 最终实体 {{ quality.entities_after[type] || 0 }}</template></li></ul>
+        <p>候选记录可包含同一实体的多次提及；频次按原文位置去重，是已抽取提及数。</p>
+        <ul><li v-for="(count, reason) in quality.filtered_reasons" :key="reason">{{ filterLabels[reason] || reason }}：过滤 {{ count }} 项</li></ul>
+        <p>拒绝身份线索 {{ quality.identity_rejected_count }} 条 · 身份不确定 {{ quality.ambiguous_count }} 次 · 批量消歧请求 {{ quality.batch_request_count }} 次</p>
       </details>
       <div class="graph-actions">
         <button v-if="running" class="button" :disabled="busy || status.job?.stop_requested" @click="graph.stop()">{{ status.job?.stop_requested ? '正在停止…' : '停止构建' }}</button>

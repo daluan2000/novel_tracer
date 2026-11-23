@@ -24,6 +24,11 @@ identity_links 只记录有明确同一身份或别名表述的两个实体；�
 同一实体的全名、简称、别名、绰号、尊号分别作为实体名称抽取，并用 identity_links 连接；
 只记录原文实际出现且能定位的名称，不凭常识补全；否认同一身份或假冒称号不建立身份线索。
 只抽取涉及 core 范围的内容，上下文用于理解。没有内容时返回空数组。
+普通器物、临时背景地点、泛化称谓不作为专名实体；例如姑娘、哥儿、桌子、门口不入库。
+说话人不是话语中提到的人；“甲道：乙”不能建立甲与乙的身份线索。
+identity_links 仅限名称之间有明确的又名、本名、改名、简称、字、号或同一人表述；称呼和共同出现不够。
+plot_relevant 默认 false；仅关键身份线索、关键物品、关键事件场所或明确影响剧情发展的实体设 true，
+同时用 importance_evidence 提供1至3段原文依据；普通持有、使用、位于关系不等于剧情重要。
 每批最多80实体、120关系、40身份线索。"""
 
 COMPACT_EXTRACTION_PROMPT = """从分段小说原文抽取实体和语义关系，仅调用要求的结构化工具。
@@ -43,7 +48,11 @@ sibling_of/spouse_of/friend_of/knows/cooperates_with/hostile_to 为对称关系�
 全名、简称、别名、绰号、尊号分别列为实体，用 identity_links 连接有明确同一身份依据的名称。
 不凭常识补充未出现的名称；否认同一身份、假冒称号不建立身份线索。
 只抽取涉及 core 的内容。最多32个实体、48条关系、12条身份线索；信息少时返回短结果，
-没有内容就返回空数组。切勿为填满数组而重复生成实体、关系或原文。"""
+没有内容就返回空数组。切勿为填满数组而重复生成实体、关系或原文。
+普通器物、临时背景地点、姑娘/哥儿等泛称不入库。说话人不是话语中提到的人。
+“甲道：乙”、呼唤某人、共同出现都不是身份线索；仅明确的又名、本名、改名、简称、字、号或同一人表述才输出。
+plot_relevant 默认 false；仅关键身份线索、关键物品、关键事件场所或明确推动剧情的实体设 true，
+并在 importance_evidence_ids 提供1至3个原文片段编号；普通持有、使用、位于不算重要。"""
 
 
 @dataclass(frozen=True)
@@ -139,7 +148,8 @@ def validate_compact_batch(corpus: NovelCorpus, window: Window, batch: CompactEx
     entities = []
     for entity in batch.entities:
         entities.append({"local_id": entity.local_id, "name": entity.name, "type": entity.type,
-            "mentions": [{"span_id": entity.span_id, "quote": entity.name, "occurrence": entity.occurrence}]})
+            "mentions": [{"span_id": entity.span_id, "quote": entity.name, "occurrence": entity.occurrence}],
+            "plot_relevant": entity.plot_relevant})
     def evidence(ids):
         result = []
         for span_id in dict.fromkeys(ids):
@@ -149,6 +159,12 @@ def validate_compact_batch(corpus: NovelCorpus, window: Window, batch: CompactEx
             result.append({"span_id": span_id, "quote": corpus.document.source.text[start:end], "occurrence": 1})
         return result
     relations, links = [], []
+    for entity, output in zip(batch.entities, entities):
+        try:
+            output["importance_evidence"] = evidence(entity.importance_evidence_ids)
+        except ValueError:
+            output["plot_relevant"] = False
+            output["importance_evidence"] = []
     for relation in batch.relations:
         try:
             relations.append({**relation.model_dump(exclude={"evidence_ids"}), "evidence": evidence(relation.evidence_ids)})
@@ -221,7 +237,16 @@ def validate_batch(corpus: NovelCorpus, window: Window, batch: ExtractionBatch) 
             mentions = [locate(corpus, window, a) for a in item.mentions]
             if not all(item.name == m["quote"] for m in mentions):
                 raise ValueError("unanchored_name")
-            entities[item.local_id] = {**item.model_dump(exclude={"mentions"}), "mentions": mentions}
+            importance = []
+            if item.plot_relevant:
+                try:
+                    importance = [locate(corpus, window, a) for a in item.importance_evidence]
+                    if not any(item.name in span["quote"] for span in importance):
+                        importance = []
+                except ValueError:
+                    importance = []
+            entities[item.local_id] = {**item.model_dump(exclude={"mentions", "importance_evidence"}),
+                "mentions": mentions, "importance_evidence": importance, "plot_relevant": bool(importance)}
         except ValueError:
             rejected["entities"] += 1
     for item in batch.relations:

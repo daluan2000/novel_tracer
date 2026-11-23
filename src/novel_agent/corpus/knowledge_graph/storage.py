@@ -218,6 +218,32 @@ class GraphStorage:
             db.execute("INSERT OR REPLACE INTO graph_units VALUES(?,?,?,?,?,?,?)", (version, unit_id, kind, sequence, input_hash, status, encode(result)))
 
     @retry_busy
+    def save_predictions(self, version: str, records):
+        """Save every per-record prediction together before applying a batch."""
+        with self.connect() as db:
+            for unit_id, input_hash, result, sequence in records:
+                db.execute("INSERT OR REPLACE INTO graph_units VALUES(?,?,?,?,?,'completed',?)",
+                           (version, unit_id, "resolve_prediction", sequence, input_hash, encode(result)))
+
+    @retry_busy
+    def prepare_resolution(self, version: str, entity_count: int, identity_count: int) -> dict:
+        """Reserve progress units in one transaction and load resumable decisions."""
+        with self.connect() as db:
+            records = [(version, f"resolve:{i}", "resolve", i, "", "pending", "{}") for i in range(entity_count)]
+            records.extend((version, f"resolve:identity:{i}", "resolve", entity_count + i, "", "pending", "{}")
+                           for i in range(identity_count))
+            db.executemany("INSERT OR IGNORE INTO graph_units VALUES(?,?,?,?,?,?,?)", records)
+            return {row["unit_id"]: {"input_hash": row["input_hash"], "result": json.loads(row["result_json"])}
+                    for row in db.execute("SELECT unit_id,input_hash,result_json FROM graph_units WHERE version=? AND kind IN ('resolve','resolve_batch','resolve_prediction') AND status='completed'", (version,))}
+
+    @retry_busy
+    def quality_stats(self, version: str, stats: dict):
+        with self.connect() as db:
+            counts = json.loads(db.execute("SELECT counts_json FROM graph_versions WHERE version=?", (version,)).fetchone()[0])
+            counts["quality_stats"] = stats
+            db.execute("UPDATE graph_versions SET counts_json=? WHERE version=?", (encode(counts), version))
+
+    @retry_busy
     def split_unit(self, version: str, unit_id: str, children: list[tuple[str, str]], sequence: int, *, min_chars: int = 500, candidate_counts: dict | None = None):
         """Persist both halves before requesting either, including across restarts."""
         with self.connect() as db:
@@ -259,7 +285,9 @@ class GraphStorage:
                     db.execute("INSERT OR IGNORE INTO graph_evidence_groups VALUES(?,?,?,?,?,?)", (version, gid, r["id"], min(s["section_order"] for s in group), max(s["section_order"] for s in group), evidence_hash))
                     for i, span in enumerate(group):
                         db.execute("INSERT OR IGNORE INTO graph_evidence_spans VALUES(?,?,?,?,?)", (version, gid, i, span["section_order"], encode(span)))
-            db.execute("UPDATE graph_versions SET counts_json=? WHERE version=?", (encode({"entity_count": len(entities), "relation_count": len(relations)}), version))
+            counts = json.loads(db.execute("SELECT counts_json FROM graph_versions WHERE version=?", (version,)).fetchone()[0])
+            counts.update(entity_count=len(entities), relation_count=len(relations))
+            db.execute("UPDATE graph_versions SET counts_json=? WHERE version=?", (encode(counts), version))
 
     @retry_busy
     def publish(self, novel_id: str, version: str, job_id: str) -> bool:

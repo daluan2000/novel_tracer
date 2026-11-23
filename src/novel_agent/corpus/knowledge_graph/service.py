@@ -20,16 +20,19 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from novel_agent.runtime.config import (ModelConfig, structured_output_retries, graph_request_timeout_seconds,
     graph_request_retries, graph_max_output_tokens, graph_extraction_concurrency,
-    graph_resolution_concurrency, graph_rate_limit_retries)
+    graph_resolution_concurrency, graph_rate_limit_retries, graph_min_entity_mentions)
 from novel_agent.runtime.structured_output import invoke_structured
 from .extraction import (EXTRACTION_PROMPT, COMPACT_EXTRACTION_PROMPT, validate_batch,
     validate_compact_batch, core_candidate_counts, compact_window, windows, split_window)
 from .concurrency import BuildStopped, parallel_map
-from .models import ExtractionBatch, CompactExtractionBatch, GraphError, GraphOutputLimitError, ResolutionDecision
+from .models import (BatchResolutionDecision, ExtractionBatch, CompactExtractionBatch,
+                     GraphError, GraphOutputLimitError, ResolutionDecision)
 from .ontology import PARSER_VERSION, RULE_VERSION, digest, ontology_payload
 from .output_contracts import output_contract
 from .query import GraphReadSession
-from .resolution import IDENTITY_PROMPT, RESOLUTION_PROMPT, resolve
+from .resolution import (BATCH_RESOLUTION_PROMPT, IDENTITY_PROMPT, RESOLUTION_PROMPT,
+                         RESOLUTION_BATCH_SIZE, resolve)
+from .selection import select_candidates, select_resolved
 from .storage import GraphStorage, encode, now
 
 LOGGER = logging.getLogger(__name__)
@@ -156,6 +159,7 @@ class KnowledgeGraphService:
             graph_extraction_concurrency()
             graph_resolution_concurrency()
             graph_rate_limit_retries()
+            graph_min_entity_mentions()
             return config
         except (ValueError, RuntimeError) as exc:
             raise GraphError("graph_model_not_configured", "请先配置有效的聊天模型。") from exc
@@ -163,8 +167,10 @@ class KnowledgeGraphService:
     def _fingerprint(self, item, config):
         return digest({"source": source_identity(item), "model": model_identity(config),
                        "rules": RULE_VERSION, "core_chars": 2500, "context_chars": 300,
-                       "prompts": digest([EXTRACTION_PROMPT, COMPACT_EXTRACTION_PROMPT, RESOLUTION_PROMPT, IDENTITY_PROMPT]), "ontology": ontology_payload(),
-                       "schemas": digest([ExtractionBatch.model_json_schema(), ResolutionDecision.model_json_schema()])})
+                       "minimum_mentions": graph_min_entity_mentions(), "resolution_batch_size": RESOLUTION_BATCH_SIZE,
+                       "prompts": digest([EXTRACTION_PROMPT, COMPACT_EXTRACTION_PROMPT, RESOLUTION_PROMPT, IDENTITY_PROMPT, BATCH_RESOLUTION_PROMPT]), "ontology": ontology_payload(),
+                       "schemas": digest([ExtractionBatch.model_json_schema(), CompactExtractionBatch.model_json_schema(),
+                                          ResolutionDecision.model_json_schema(), BatchResolutionDecision.model_json_schema()])})
 
     def status(self, novel_id):
         item = self.novels.get(novel_id)
@@ -197,7 +203,8 @@ class KnowledgeGraphService:
                 if version:
                     with self.storage.connect() as db:
                         row = db.execute("SELECT counts_json FROM graph_versions WHERE version=?", (version,)).fetchone()
-                        result["counts"] = json.loads(row[0])
+                        counts = json.loads(row[0])
+                        result["counts"] = {key: counts[key] for key in ("entity_count", "relation_count")}
         except sqlite3.Error:
             self.error_code = "graph_storage_unavailable"
             result.update(available=False, error_code=self.error_code)
@@ -223,6 +230,12 @@ class KnowledgeGraphService:
             version_row = db.execute("SELECT fingerprint,counts_json FROM graph_versions WHERE version=?", (version,)).fetchone()
             totals = json.loads(version_row["counts_json"])
             events = [dict(e) for e in db.execute("SELECT code,level,created_at FROM graph_events WHERE job_id=? ORDER BY event_id DESC LIMIT 50", (job["job_id"],))]
+            quality = totals.get("quality_stats")
+            if quality is not None:
+                quality["ambiguous_count"] = db.execute("SELECT COUNT(*) FROM graph_events WHERE job_id=? AND code='entity_identity_ambiguous'", (job["job_id"],)).fetchone()[0]
+                quality["identity_rejected_count"] = quality["filtered_reasons"].get("identity_evidence", 0) + db.execute(
+                    "SELECT COUNT(*) FROM graph_events WHERE job_id=? AND code IN ('entity_identity_evidence_rejected','entity_identity_conflict_rejected')", (job["job_id"],)).fetchone()[0]
+                quality["batch_request_count"] = sum(a["unit_id"].startswith("resolve:batch:") for a in attempts)
         def progress(kind):
             result = {"completed": counts.get((kind, "completed"), 0),
                       "total": sum(n for (k, state), n in counts.items() if k == kind and state != "split")}
@@ -243,6 +256,7 @@ class KnowledgeGraphService:
                 "relation_count": totals.get("relation_count", 0), "usage": usage,
                 "elapsed_seconds": elapsed, "error_code": job["error_code"], "events": events,
                 "phase_elapsed_seconds": phase_seconds, "phase_model_seconds": model_seconds,
+                "quality_stats": quality,
                 "can_resume": bool(job["status"] in {"failed", "stopped"} and config and item
                                    and version_row["fingerprint"] == self._fingerprint(item, config))}
 
@@ -565,30 +579,46 @@ class KnowledgeGraphService:
                                     check=lambda: self._check_stop(job), on_error=self.abort.set)
         batches = [batch for results in root_results for batch in results]
         self._check_stop(job)
+        minimum = graph_min_entity_mentions()
+        batches, quality = select_candidates(batches, minimum)
+        self.storage.quality_stats(job["version"], quality)
         self._set_phase(job, "resolving")
         total = sum(len(b["entities"]) for b in batches)
-        for sequence in range(total):
-            uid = f"resolve:{sequence}"
-            if not self.storage.unit(job["version"], uid):
-                self.storage.save_unit(job["version"], uid, "resolve", sequence, "", {}, "pending")
-        for sequence in range(sum(len(b["identity_links"]) for b in batches)):
-            uid = f"resolve:identity:{sequence}"
-            if not self.storage.unit(job["version"], uid):
-                self.storage.save_unit(job["version"], uid, "resolve", total + sequence, "", {}, "pending")
+        resolution_units = self.storage.prepare_resolution(job["version"], total,
+            sum(len(b["identity_links"]) for b in batches))
+        checkpoint_lock = threading.Lock()
         def checkpoint(unit_id, input_hash, result=None, sequence=0):
             if result is not None:
-                self.storage.save_unit(job["version"], unit_id, "resolve", sequence, input_hash, result)
+                kind = "resolve_batch" if unit_id.startswith("resolve:batch:") else "resolve_prediction" if unit_id.startswith("resolve:prediction:") else "resolve"
+                self.storage.save_unit(job["version"], unit_id, kind, sequence, input_hash, result)
+                with checkpoint_lock:
+                    resolution_units[unit_id] = {"input_hash": input_hash, "result": result}
                 return
             self._check_stop(job)
-            saved = self.storage.unit(job["version"], unit_id)
-            if saved and saved["status"] == "completed":
+            with checkpoint_lock:
+                saved = resolution_units.get(unit_id)
+            if saved is not None:
                 if saved["input_hash"] != input_hash:
                     raise ValueError("resolution_checkpoint_changed")
                 return saved["result"]
+        def save_predictions(records):
+            self.storage.save_predictions(job["version"], records)
+            with checkpoint_lock:
+                resolution_units.update({uid: {"input_hash": fingerprint, "result": result}
+                                         for uid, fingerprint, result, _ in records})
+        checkpoint.save_many = save_predictions
         entities, relations = resolve(batches, job["version"],
-            lambda uid, schema, prompt, payload: self._invoke(job, get_model(), uid, schema, prompt, payload),
+            lambda uid, schema, prompt, payload: self._invoke(job, get_model(), uid, schema, prompt, payload,
+                timeout_retries=0 if schema is BatchResolutionDecision and len(payload["entities"]) > 1 else None),
             checkpoint, lambda code: self.storage.event(job["job_id"], code, "warning"),
-            concurrency=graph_resolution_concurrency(), check=lambda: self._check_stop(job), on_error=self.abort.set)
+            concurrency=graph_resolution_concurrency(), check=lambda: self._check_stop(job), on_error=self.abort.set,
+            batch_size=RESOLUTION_BATCH_SIZE)
+        before_final_selection = len(entities)
+        entities, relations = select_resolved(entities, relations, minimum)
+        quality["filtered_reasons"]["low_frequency_after_resolution"] = before_final_selection - len(entities)
+        quality["entities_after"] = {kind: sum(e["type"] == kind for e in entities)
+                                     for kind in ontology_payload()["entity_types"]}
+        self.storage.quality_stats(job["version"], quality)
         self._check_stop(job)
         self._set_phase(job, "materializing")
         self.storage.materialize(job["version"], entities, relations)

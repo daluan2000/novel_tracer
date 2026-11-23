@@ -227,3 +227,7 @@ def graph_resolution_concurrency() -> int:
 
 def graph_rate_limit_retries() -> int:
     return _graph_integer("NOVEL_AGENT_GRAPH_RATE_LIMIT_RETRIES", 3, 0, 5)
+
+
+def graph_min_entity_mentions() -> int:
+    return _graph_integer("NOVEL_AGENT_GRAPH_MIN_ENTITY_MENTIONS", 3, 1, 100)

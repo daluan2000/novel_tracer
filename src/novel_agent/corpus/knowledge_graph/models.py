@@ -32,6 +32,8 @@ class ExtractedEntity(StrictModel):
     name: str = Field(min_length=1, max_length=100)
     mentions: list[Anchor] = Field(min_length=1)
     description: str = Field(default="", max_length=300)
+    plot_relevant: bool = False
+    importance_evidence: list[Anchor] = Field(default_factory=list, max_length=3)
 
 
 class ExtractedRelation(StrictModel):
@@ -61,6 +63,8 @@ class CompactEntity(StrictModel):
     type: Literal["person", "place", "organization", "item", "skill", "concept"]
     span_id: str
     occurrence: int = Field(default=1, ge=1)
+    plot_relevant: bool = False
+    importance_evidence_ids: list[str] = Field(default_factory=list, max_length=3)
 
 
 class CompactRelation(StrictModel):
@@ -88,6 +92,14 @@ class ResolutionDecision(StrictModel):
     decision: Literal["merge", "new", "ambiguous"]
     candidate_id: str | None = None
     supporting_mentions: list[str] = Field(default_factory=list)
+
+
+class EntityResolutionDecision(ResolutionDecision):
+    entity_ref: str
+
+
+class BatchResolutionDecision(StrictModel):
+    decisions: list[EntityResolutionDecision] = Field(max_length=16)
 
 
 class BuildRequest(StrictModel):
