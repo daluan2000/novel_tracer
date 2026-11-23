@@ -339,40 +339,59 @@ def build_catalog(batches, version, invoke, checkpoint, event, *, minimum=3, con
             decisions.append({"unit_id": "catalog:introduction", "accepted": True, "reason": "source_introduction", "entity_id": eid})
 
     on_phase("auditing")
+    def review(task):
+        keys, involved, payload, uid = task
+        return keys, involved, payload, uid, request(uid, CatalogDecision, CATALOG_PROMPT, payload)
+
     for round_no in range(2):
         changed = False
-        for keys in groups:
-            check()
-            involved = [p for p in profiles.values() if any((p["type"], normalize(f["name"])) in keys for f in p["name_forms"])]
-            covered = {(p["type"], normalize(f["name"])) for p in involved for f in p["name_forms"]}
-            duplicate = len({(p["type"], normalize(p["name"])) for p in involved}) < len(involved)
-            # A shared alias is expected for homonyms and is resolved per
-            # occurrence. Review unresolved full-name/given-name splits instead
-            # of repeatedly trying to eliminate valid shared-name profiles.
-            competing = any(p["id"] != q["id"] and len(p["name"]) >= 2
-                and len(q["name"]) - len(p["name"]) in (1, 2) and q["name"].endswith(p["name"])
-                for p in involved for q in involved)
-            if not (set(keys) - covered or duplicate or competing):
-                continue
-            payload = payload_for(keys, involved)
-            uid = f"audit:{round_no}:" + digest(keys)[:24]
-            replacement = validate(request(uid, CatalogDecision, CATALOG_PROMPT, payload), payload, uid)
-            # Recompute a catalog snapshot, retaining forms outside this bounded
-            # neighborhood only when their original identity anchor survives.
-            old = {p["id"]: p for p in involved}
-            for eid, p in replacement.items():
-                if eid in old:
-                    outside = [f for f in old[eid]["name_forms"] if (p["type"], normalize(f["name"])) not in keys]
-                    p["name_forms"].extend(outside)
-            if old != replacement:
-                changed = True
-            for eid in old:
-                # Omitting a previously grounded name is uncertainty, not a
-                # source-backed instruction to erase an established identity.
-                replaced_names = {f["name"] for p in replacement.values() for f in p["name_forms"]}
-                if old[eid]["name"] in replaced_names:
-                    profiles.pop(eid, None)
-            profiles.update(replacement)
+        index = 0
+        while index < len(groups):
+            tasks, reserved = [], set()
+            while index < len(groups) and len(tasks) < concurrency:
+                check()
+                keys = groups[index]
+                involved = [p for p in profiles.values() if any((p["type"], normalize(f["name"])) in keys for f in p["name_forms"])]
+                covered = {(p["type"], normalize(f["name"])) for p in involved for f in p["name_forms"]}
+                # Shared anchors and profiles can connect bounded neighborhoods.
+                # Finish earlier reviews before even deciding whether a dependent
+                # group needs review, so its payload matches serial execution.
+                footprint = set(keys) | covered
+                if footprint & reserved:
+                    break
+                index += 1
+                duplicate = len({(p["type"], normalize(p["name"])) for p in involved}) < len(involved)
+                # A shared alias is expected for homonyms and is resolved per
+                # occurrence. Review unresolved full-name/given-name splits instead
+                # of repeatedly trying to eliminate valid shared-name profiles.
+                competing = any(p["id"] != q["id"] and len(p["name"]) >= 2
+                    and len(q["name"]) - len(p["name"]) in (1, 2) and q["name"].endswith(p["name"])
+                    for p in involved for q in involved)
+                if not (set(keys) - covered or duplicate or competing):
+                    continue
+                payload = payload_for(keys, involved)
+                uid = f"audit:{round_no}:" + digest(keys)[:24]
+                tasks.append((keys, involved, payload, uid))
+                reserved.update(footprint)
+            for keys, involved, payload, uid, response in parallel_map(
+                    review, tasks, concurrency, check=check, on_error=on_error):
+                replacement = validate(response, payload, uid)
+                # Commit in source group order, retaining forms outside this
+                # neighborhood only when their identity anchor survives.
+                old = {p["id"]: p for p in involved}
+                for eid, p in replacement.items():
+                    if eid in old:
+                        outside = [f for f in old[eid]["name_forms"] if (p["type"], normalize(f["name"])) not in keys]
+                        p["name_forms"].extend(outside)
+                if old != replacement:
+                    changed = True
+                for eid in old:
+                    # Omitting a previously grounded name is uncertainty, not a
+                    # source-backed instruction to erase an established identity.
+                    replaced_names = {f["name"] for p in replacement.values() for f in p["name_forms"]}
+                    if old[eid]["name"] in replaced_names:
+                        profiles.pop(eid, None)
+                profiles.update(replacement)
         if not changed:
             break
 
@@ -468,8 +487,11 @@ def build_catalog(batches, version, invoke, checkpoint, event, *, minimum=3, con
         for mid in scoped:
             bindings[mid] = {**bindings[mid], "entity_id": None, "status": "pending",
                              "reason": "context_conflict", "supporting_mentions": []}
-            for binding in bind_block([mid], review=True, hints={mid: scoped[mid]}):
-                bindings[mid] = binding
+        def review_binding(mid):
+            return bind_block([mid], review=True, hints={mid: scoped[mid]})
+        for result in parallel_map(review_binding, scoped, concurrency, check=check, on_error=on_error):
+            for binding in result:
+                bindings[binding["mention_id"]] = binding
 
     entities = {}
     for mid, binding in bindings.items():

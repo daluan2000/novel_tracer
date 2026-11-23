@@ -3,6 +3,8 @@ from __future__ import annotations
 import copy
 import json
 import sqlite3
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -99,6 +101,89 @@ def test_catalog_review_replaces_a_split_and_rebinds_earlier_mentions():
     result = build_catalog(values, "v", invoke, Checkpoints(), lambda _: None)
     assert len(result.entities) == 1 and result.entities[0]["name"] == "林黛玉"
     assert len(result.entities[0]["mentions"]) == 2
+
+
+def test_independent_catalog_reviews_are_bounded_and_match_serial_checkpoints():
+    identities = [(name, [name, name[1:]]) for name in
+                  ("林黛玉", "贾宝玉", "薛宝钗", "王熙凤", "史湘云", "贾迎春", "贾探春", "贾惜春")]
+    values = [batch(f"u{i}", [entity(name, i * 100)])
+              for i, name in enumerate(name for _, forms in identities for name in forms)]
+
+    def run(workers, records=None, stop_after_audit=False):
+        records = records or Checkpoints()
+        barrier, lock = threading.Barrier(workers), threading.Lock()
+        payloads, active, peak = {}, 0, 0
+
+        def invoke(uid, schema, prompt, payload):
+            nonlocal active, peak
+            with lock:
+                payloads[uid] = copy.deepcopy(payload)
+            if uid.startswith("catalog:"):
+                return response(payload, [(name, [name]) for name, _ in identities])
+            with lock:
+                active += 1
+                peak = max(peak, active)
+            try:
+                barrier.wait(timeout=5)
+                # Complete out of order; commits and checkpoint hashes must
+                # still match the serial traversal.
+                time.sleep(0.01 if payload["cards"][0]["name"] == "史湘云" else 0)
+                return response(payload, identities)
+            finally:
+                with lock:
+                    active -= 1
+
+        def check():
+            if stop_after_audit and sum(uid.startswith("audit:") for uid in list(records.records)) >= workers:
+                raise BuildStopped()
+
+        if stop_after_audit:
+            with pytest.raises(BuildStopped):
+                build_catalog(values, "v", invoke, records, lambda _: None, concurrency=workers, check=check)
+            return records
+        result = build_catalog(values, "v", invoke, records, lambda _: None, concurrency=workers)
+        assert peak == workers
+        return result, records, payloads
+
+    serial, saved, payloads = run(1)
+    parallel, parallel_saved, parallel_payloads = run(4)
+    assert len(parallel.entities) == 8
+    assert parallel == serial
+    assert parallel_saved.records == saved.records and parallel_payloads == payloads
+    for workers, records in ((1, parallel_saved), (4, saved)):
+        assert build_catalog(values, "v", lambda *_: pytest.fail("replay called model"),
+                             records, lambda _: None, concurrency=workers) == serial
+    stopped = run(4, stop_after_audit=True)
+    paid = set(stopped.records)
+    resumed, _, remaining_payloads = run(4, stopped)
+    assert resumed == serial
+    assert not paid.intersection(remaining_payloads)
+
+
+def test_overlapping_catalog_reviews_use_updated_profiles_and_keep_serial_hashes():
+    forms = [f"名号{i:02d}" for i in range(30)]
+    values = [batch("u", [entity(name, i * 100) for i, name in enumerate(forms)], links=[{
+        "source": forms[0], "target": name, "evidence": []} for name in forms[1:]])]
+    _, groups = candidate_groups(collect_inventory(values))
+    assert len(groups) > 1 and set(groups[0]) & set(groups[1])
+
+    def run(workers, records=None):
+        records, payloads = records or Checkpoints(), {}
+        def invoke(uid, schema, prompt, payload):
+            payloads[uid] = copy.deepcopy(payload)
+            names = [card["name"] for card in payload["cards"]]
+            return response(payload, [(names[0], names if uid.startswith("audit:") else names[:1])])
+        return build_catalog(values, "v", invoke, records, lambda _: None, concurrency=workers), records, payloads
+
+    serial, saved, payloads = run(1)
+    parallel, parallel_saved, parallel_payloads = run(4)
+    audits = [payload for uid, payload in payloads.items() if uid.startswith("audit:0:")]
+    assert len(audits) > 1
+    assert len(audits[1]["current_profiles"][0]["name_forms"]) > len(audits[0]["current_profiles"][0]["name_forms"])
+    assert parallel == serial
+    assert parallel_saved.records == saved.records and parallel_payloads == payloads
+    replay, _, calls = run(4, saved)
+    assert replay == serial and not calls
 
 
 def test_binding_invalid_references_and_duplicate_responses_remain_pending():
@@ -244,35 +329,39 @@ def test_explicit_source_introduction_survives_a_model_omission():
 
 
 @pytest.mark.parametrize("review_resolves", [False, True])
-def test_household_scope_conflict_gets_focused_review_not_a_surname_override(review_resolves):
+@pytest.mark.parametrize("workers", [1, 4])
+def test_household_scope_conflict_gets_focused_review_not_a_surname_override(review_resolves, workers):
     context = "钱家的太太带了他们家的明远来了。"
-    target = entity("明远", 100, context=context)
-    target["contexts"][0].update(start_char=100 - context.index("明远"), end_char=100 - context.index("明远") + len(context))
-    values = [batch("a", [entity("赵明远", 0)]), batch("b", [entity("钱明远", 20)]), batch("c", [target])]
-    reviews = []
+    targets = [entity("明远", position, context=context) for position in range(100, 500, 100)]
+    for target in targets:
+        position = target["mentions"][0]["start_char"] - context.index("明远")
+        target["contexts"][0].update(start_char=position, end_char=position + len(context))
+    values = [batch("a", [entity("赵明远", 0)]), batch("b", [entity("钱明远", 20)]), batch("c", targets)]
+    reviews, barrier = [], threading.Barrier(workers)
     def invoke(uid, schema, prompt, payload):
         if schema is CatalogDecision:
             result = response(payload, [("赵明远", ["赵明远", "明远"]), ("钱明远", ["钱明远", "明远"])])
             for profile in result.profiles:
                 profile.person_name = PersonName(family_name=profile.canonical_name[0], given_name="明远")
             return result
-        item = payload["mentions"][0]
         if uid.startswith("audit:"):
             reviews.append(uid)
+            barrier.wait(timeout=5)
             if not review_resolves:
                 return MentionBindingBatch()
         chosen = "钱明远" if uid.startswith("audit:") else "赵明远"
-        eid = next(c["entity_id"] for c in item["candidates"] if c["canonical_name"] == chosen)
-        return MentionBindingBatch.model_validate({"bindings": [{"mention_id": item["mention_id"], "entity_id": eid,
-            "supporting_mentions": [item["mention_id"]]}]})
-    result = build_catalog(values, "v", invoke, Checkpoints(), lambda _: None)
-    assert len(reviews) == 1
-    current = next(b for b in result.bindings if b["mention_id"] == "m100_102_person")
-    if review_resolves:
-        profile = next(e for e in result.entities if e["id"] == current["entity_id"])
-        assert profile["name"] == "钱明远"
-    else:
-        assert current["status"] == "pending" and current["reason"] == "context_conflict"
+        return MentionBindingBatch.model_validate({"bindings": [{"mention_id": item["mention_id"],
+            "entity_id": next(c["entity_id"] for c in item["candidates"] if c["canonical_name"] == chosen),
+            "supporting_mentions": [item["mention_id"]]} for item in payload["mentions"]]})
+    result = build_catalog(values, "v", invoke, Checkpoints(), lambda _: None, concurrency=workers)
+    assert len(reviews) == 4
+    for position in range(100, 500, 100):
+        current = next(b for b in result.bindings if b["mention_id"] == f"m{position}_{position + 2}_person")
+        if review_resolves:
+            profile = next(e for e in result.entities if e["id"] == current["entity_id"])
+            assert profile["name"] == "钱明远"
+        else:
+            assert current["status"] == "pending" and current["reason"] == "context_conflict"
 
 
 def test_recorded_real_model_run_preserves_book_identity_quality_without_network():
