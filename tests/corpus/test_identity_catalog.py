@@ -5,7 +5,6 @@ import json
 import sqlite3
 import threading
 import time
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -299,8 +298,9 @@ def test_stop_after_paid_catalog_result_reuses_it_on_resume():
     assert len(result.entities) == 1
 
 
-def test_real_novel_dataset_has_identity_labels_and_fact_endpoints():
-    dataset = json.loads((Path(__file__).parents[1] / "fixtures/red_chamber_identity.json").read_text(encoding="utf-8"))
+def test_real_novel_dataset_has_identity_labels_and_fact_endpoints(local_fixture_path):
+    dataset_path = local_fixture_path("red_chamber_identity.json")
+    dataset = json.loads(dataset_path.read_text(encoding="utf-8"))
     assert len(dataset["mentions"]) >= 500 and len(dataset["identities"]) >= 20 and len(dataset["facts"]) >= 100
     assert len({m["anchor"]["section_id"] for m in dataset["mentions"]}) >= 20
     labels = {m["mention_id"]: m["gold_identity"] for m in dataset["mentions"]}
@@ -364,12 +364,13 @@ def test_household_scope_conflict_gets_focused_review_not_a_surname_override(rev
             assert current["status"] == "pending" and current["reason"] == "context_conflict"
 
 
-def test_recorded_real_model_run_preserves_book_identity_quality_without_network():
+def test_recorded_real_model_run_preserves_book_identity_quality_without_network(local_fixture_path):
     from scripts.evaluate_identity_catalog import sample_batches, score
     from novel_agent.corpus.knowledge_graph.ontology import digest
-    folder = Path(__file__).parents[1] / "fixtures"
-    dataset = json.loads((folder / "red_chamber_identity.json").read_text(encoding="utf-8"))
-    recording = json.loads((folder / "red_chamber_catalog_recording.json").read_text(encoding="utf-8"))
+    dataset_path = local_fixture_path("red_chamber_identity.json")
+    recording_path = local_fixture_path("red_chamber_catalog_recording.json")
+    dataset = json.loads(dataset_path.read_text(encoding="utf-8"))
+    recording = json.loads(recording_path.read_text(encoding="utf-8"))
     assert digest(dataset) == recording["dataset_hash"]
     def checkpoint(uid, fingerprint, result=None, sequence=0):
         assert result is None, "a recorded run must only read paid checkpoints"

@@ -28,6 +28,7 @@ Thumbs.db
 Desktop.ini
 
 # Local source material and personal documents
+tests/fixtures/
 data/*.txt
 data/*.TXT
 *.txt
