@@ -128,7 +128,7 @@ describe('AgentWorkspace observability', () => {
     expect(wrapper.text()).toContain('语义索引已就绪')
     expect(wrapper.text()).toContain('100%')
     expect(wrapper.text()).toContain('人物关系如何变化')
-    expect(wrapper.text()).toContain('当前会话')
+    expect(wrapper.get('.conversation-header h2').text()).toBe('人物关系如何变化')
     expect(wrapper.text()).not.toContain('证据型解读')
   })
 

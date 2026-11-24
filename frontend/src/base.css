@@ -1,19 +1,36 @@
 :root {
   font-family: Inter, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
-  color: #293b36;
-  background: #f6f7f5;
+  font-size: 15px;
+  line-height: 1.6;
+  color: #283e35;
+  background: #f5f6f2;
   font-synthesis: none;
-  --ink: #293b36;
-  --muted: #7b8680;
-  --paper: #fafbf9;
-  --line: #e5e9e3;
-  --accent: #39715b;
-  --accent-dark: #28513f;
-  --green: #39715b;
-  --green-soft: #eaf3ed;
-  --amber: #a67d37;
-  --red-soft: #fff0eb;
-  --shadow: 0 4px 20px #253a2a04;
+  --ink: #283e35;
+  --muted: #66756b;
+  --paper: #fafbf8;
+  --surface: #fff;
+  --surface-soft: #f1f5ee;
+  --line: #dfe6dc;
+  --accent: #356b52;
+  --accent-dark: #254e3c;
+  --green: var(--accent);
+  --green-soft: #eaf2e8;
+  --amber: #8b652a;
+  --red: #a03e32;
+  --red-soft: #fff1ed;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-md: 15px;
+  --text-body: 16px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --space-sm: 12px;
+  --space-md: 20px;
+  --space-lg: 28px;
+  --shadow: 0 4px 24px #253a2a06;
+  --shadow-raised: 0 8px 24px #253a2a0d;
+  --focus-ring: 0 0 0 3px #356b521c;
 }
 
 * {
@@ -22,7 +39,7 @@
 
 body {
   margin: 0;
-  min-width: 360px;
+  min-width: 320px;
 }
 
 button,
@@ -34,6 +51,8 @@ select {
 
 button {
   cursor: pointer;
+  color: inherit;
+  touch-action: manipulation;
 }
 
 button:disabled,
@@ -51,6 +70,21 @@ a {
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 3px;
+}
+
+::selection {
+  color: var(--accent-dark);
+  background: #dcebd9;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #73816f;
+  opacity: 1;
+}
+
+svg {
+  flex-shrink: 0;
 }
 
 .sr-only {

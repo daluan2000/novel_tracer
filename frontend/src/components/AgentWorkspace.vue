@@ -324,8 +324,7 @@ async function toggleEvidence(evidence: Evidence) {
       <div class="conversation-main">
         <header class="conversation-header">
           <div>
-            <p class="mini-title">{{ activeConversation ? '当前会话' : '新的对话' }}</p>
-            <h2>{{ activeConversation?.title || '今天想读懂什么？' }}</h2>
+            <h2>{{ activeConversation?.title || '新的对话' }}</h2>
           </div><button v-if="activeConversation" class="text-button delete-conversation"
             :disabled="isRunning || submitting" @click="deleteActiveConversation">删除会话</button>
         </header>
@@ -434,8 +433,7 @@ async function toggleEvidence(evidence: Evidence) {
         <div v-else-if="detailTab === 'process'" class="detail-content">
           <div v-if="currentTurn || view.status !== 'idle'" class="run-header">
             <div>
-              <p class="eyebrow">实时分析</p>
-              <h2>调查进展</h2>
+              <strong>调查进展</strong>
             </div>
             <small v-if="view.snapshot?.graph_version">本轮图谱 {{ view.snapshot.graph_version.slice(0, 8) }}</small>
             <div class="run-status" :class="`status-${view.status}`"><span></span>{{ statusNames[view.status] }}</div>
@@ -483,8 +481,7 @@ async function toggleEvidence(evidence: Evidence) {
           <div v-if="view.snapshot?.evidence.length" class="evidence-section">
             <div class="section-heading">
               <div>
-                <p class="eyebrow">已经核验</p>
-                <h2>原文依据</h2>
+                <strong>已核验引文</strong>
               </div><span>{{ view.snapshot.evidence.length }} 条</span>
             </div>
             <div class="evidence-grid">

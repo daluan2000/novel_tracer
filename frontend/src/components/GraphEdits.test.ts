@@ -24,9 +24,19 @@ const props = { novelId: 'n', version: 'v2', root: first, running: false, pendin
 const mutation = { graph_version: 'v3', operation: 'merge' as const, details: {} }
 
 function button(wrapper: VueWrapper, text: string) {
-  const found = wrapper.findAll('button').find(item => item.text() === text)
+  const found = wrapper.findAll('button').find(item => item.text() === text || item.attributes('aria-label') === text)
   if (!found) throw new Error(`Missing button ${text}`)
   return found
+}
+async function toNameStep(wrapper: VueWrapper) {
+  const next = wrapper.findAll('button').find(item => item.text() === '确定名称 →')
+  if (next) await next.trigger('click')
+}
+async function openHistory(wrapper: VueWrapper) {
+  await wrapper.setProps({ section: 'history' })
+  await flushPromises()
+  const revisions = wrapper.findAll('.revision-item')
+  if (revisions.length > 1) await revisions[1]!.trigger('click')
 }
 async function chooseSecond(wrapper: VueWrapper) {
   await wrapper.findAll('input')[0]!.setValue('乙')
@@ -49,6 +59,27 @@ beforeEach(() => {
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers() })
 
 describe('GraphEdits', () => {
+  it('preserves the merge draft across task pages and requires name and preview stages before saving', async () => {
+    const wrapper = mount(GraphEdits, { props })
+    await button(wrapper, '合并实体').trigger('click')
+    expect(button(wrapper, '确定名称 →').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('.flow-actions .primary').text()).toBe('确定名称 →')
+    await chooseSecond(wrapper)
+    await toNameStep(wrapper)
+    await wrapper.findAll('input')[1]!.setValue('规范名称')
+    await wrapper.setProps({ section: 'history' })
+    await flushPromises()
+    await wrapper.setProps({ section: 'entities' })
+    expect(wrapper.findAll('.graph-merge-selected li')).toHaveLength(2)
+    expect((wrapper.findAll('input')[1]!.element as HTMLInputElement).value).toBe('规范名称')
+    expect(wrapper.get('.merge-steps [aria-current]').text()).toContain('确定名称')
+    expect(graphApi.merge).not.toHaveBeenCalled()
+    await button(wrapper, '预览合并').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.merge-steps [aria-current]').text()).toContain('预览确认')
+    expect(graphApi.merge).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
   it('automatically searches once after typing settles and clears results for an empty query', async () => {
     const wrapper = mount(GraphEdits, { props })
     await button(wrapper, '合并实体').trigger('click')
@@ -114,17 +145,19 @@ describe('GraphEdits', () => {
     expect(wrapper.text()).toContain('合并作用于全书')
     await chooseSecond(wrapper)
     expect(graphApi.search).toHaveBeenCalledWith('n', 'v2', '乙', { entityTypes: ['person'] }, expect.any(AbortSignal))
+    await toNameStep(wrapper)
     await button(wrapper, '预览合并').trigger('click')
     await flushPromises()
     expect(graphApi.previewMerge).toHaveBeenCalledWith('n', { version: 'v2', entity_ids: ['a', 'b'], canonical_name: '甲' })
-    expect(wrapper.text()).toContain('全图关系 8 → 6 条')
+    expect(wrapper.get('.merge-impact').text()).toContain('8 → 6')
     await wrapper.findAll('input')[1]!.setValue('合并后的新名称')
     expect(wrapper.find('.graph-merge-preview').exists()).toBe(false)
     vi.mocked(graphApi.previewMerge).mockResolvedValueOnce({ ...preview, target: { ...preview.target, name: '合并后的新名称' } })
+    await toNameStep(wrapper)
     await button(wrapper, '预览合并').trigger('click')
     await flushPromises()
     expect(graphApi.previewMerge).toHaveBeenLastCalledWith('n', { version: 'v2', entity_ids: ['a', 'b'], canonical_name: '合并后的新名称' })
-    expect(wrapper.text()).toContain('保留名称：合并后的新名称')
+    expect(wrapper.get('.merge-target-card h3').text()).toBe('合并后的新名称')
     await button(wrapper, '确认合并并保存版本').trigger('click')
     await flushPromises()
     expect(graphApi.merge).toHaveBeenCalledWith('n', { version: 'v2', entity_ids: ['a', 'b'], canonical_name: '合并后的新名称' })
@@ -146,20 +179,24 @@ describe('GraphEdits', () => {
     expect(wrapper.findAll('.graph-candidates button')).toHaveLength(2)
     await wrapper.find('.graph-candidates button').trigger('click')
     await wrapper.find('.graph-candidates button').trigger('click')
-    expect(wrapper.text()).toContain('已选 3 个实体')
+    expect(wrapper.findAll('.graph-merge-selected li')).toHaveLength(3)
     expect(wrapper.findAll('.graph-merge-selected li')).toHaveLength(3)
     expect(wrapper.find('select').exists()).toBe(false)
+    await toNameStep(wrapper)
     await button(wrapper, '预览合并').trigger('click')
     await flushPromises()
     expect(graphApi.previewMerge).toHaveBeenCalledWith('n', { version: 'v2', entity_ids: ['a', 'b', 'c'], canonical_name: '新的规范名' })
+    if (wrapper.find('.graph-merge-preview').exists()) { await button(wrapper, '上一步').trigger('click'); await button(wrapper, '上一步').trigger('click') }
     await button(wrapper, '移除 甲').trigger('click')
     expect(wrapper.find('.graph-merge-preview').exists()).toBe(false)
     expect(wrapper.findAll('input')[1]!.element.value).toBe('新的规范名')
+    await toNameStep(wrapper)
     await button(wrapper, '预览合并').trigger('click')
     await flushPromises()
     expect(graphApi.previewMerge).toHaveBeenLastCalledWith('n', { version: 'v2', entity_ids: ['b', 'c'], canonical_name: '新的规范名' })
+    if (wrapper.find('.graph-merge-preview').exists()) { await button(wrapper, '上一步').trigger('click'); await button(wrapper, '上一步').trigger('click') }
     await button(wrapper, '移除 乙').trigger('click')
-    expect(button(wrapper, '预览合并').attributes('disabled')).toBeDefined()
+    expect(button(wrapper, '确定名称 →').attributes('disabled')).toBeDefined()
     wrapper.unmount()
   })
 
@@ -168,12 +205,15 @@ describe('GraphEdits', () => {
     await button(wrapper, '合并实体').trigger('click')
     await chooseSecond(wrapper)
     await wrapper.findAll('input')[1]!.setValue('   ')
+    await toNameStep(wrapper)
     expect(button(wrapper, '预览合并').attributes('disabled')).toBeDefined()
     let resolve!: (page: Awaited<ReturnType<typeof graphApi.search>>) => void
     vi.mocked(graphApi.search).mockReturnValueOnce(new Promise(done => { resolve = done }))
     await wrapper.findAll('input')[0]!.setValue('旧结果')
     await vi.advanceTimersByTimeAsync(300)
+    if (wrapper.find('.graph-merge-preview').exists()) { await button(wrapper, '上一步').trigger('click'); await button(wrapper, '上一步').trigger('click') }
     await button(wrapper, '移除 甲').trigger('click')
+    if (wrapper.find('.graph-merge-preview').exists()) { await button(wrapper, '上一步').trigger('click'); await button(wrapper, '上一步').trigger('click') }
     await button(wrapper, '移除 乙').trigger('click')
     resolve({ graph_version: 'v2', items: [first], total: 1, offset: 0, limit: 20,
       truncated: false, truncation_reason: null, search_complete: true })
@@ -184,9 +224,9 @@ describe('GraphEdits', () => {
 
   it('restores an older build with an explicit confirmation and keeps history visible', async () => {
     const wrapper = mount(GraphEdits, { props })
-    await button(wrapper, '查看修改历史').trigger('click')
+    await openHistory(wrapper)
     await flushPromises()
-    expect(wrapper.text()).toContain('乙 → 甲')
+    expect(wrapper.findAll('.revision-item')).toHaveLength(2)
     await button(wrapper, '恢复此版本').trigger('click')
     expect(graphApi.restore).not.toHaveBeenCalled()
     expect(wrapper.text()).toContain('今后重建以此为准')
@@ -203,7 +243,7 @@ describe('GraphEdits', () => {
     }] })
     const wrapper = mount(GraphEdits, { props: { ...props, running: true } })
     expect(button(wrapper, '合并实体').attributes('disabled')).toBeDefined()
-    await button(wrapper, '查看修改历史').trigger('click')
+    await openHistory(wrapper)
     await flushPromises()
     expect(wrapper.text()).toContain('正文或原文位置映射已变化')
     expect(wrapper.findAll('button').some(item => item.text() === '恢复此版本')).toBe(false)
@@ -213,7 +253,7 @@ describe('GraphEdits', () => {
   it('allows history to load when no compatible current graph remains', async () => {
     const wrapper = mount(GraphEdits, { props: { ...props, version: '', root: null } })
     expect(button(wrapper, '合并实体').attributes('disabled')).toBeDefined()
-    await button(wrapper, '查看修改历史').trigger('click')
+    await openHistory(wrapper)
     await flushPromises()
     expect(wrapper.text()).toContain('构建图谱')
     wrapper.unmount()
@@ -221,13 +261,14 @@ describe('GraphEdits', () => {
 
   it('discards an old book history response and clears an old version preview', async () => {
     let resolve!: (page: GraphHistory) => void
-    vi.mocked(graphApi.history).mockReturnValue(new Promise(done => { resolve = done }))
+    vi.mocked(graphApi.history).mockReturnValueOnce(new Promise(done => { resolve = done }))
+    vi.mocked(graphApi.history).mockResolvedValue({ ...history, items: [], total: 0 })
     const wrapper = mount(GraphEdits, { props })
-    await button(wrapper, '查看修改历史').trigger('click')
+    await openHistory(wrapper)
     await wrapper.setProps({ novelId: 'other', version: 'other-version' })
     resolve(history)
     await flushPromises()
-    expect(wrapper.find('.graph-history').exists()).toBe(false)
+    expect(wrapper.findAll('.revision-item')).toHaveLength(0)
     expect(wrapper.text()).not.toContain('乙 → 甲')
     expect(wrapper.emitted('changed')).toBeUndefined()
     wrapper.unmount()
@@ -246,6 +287,7 @@ describe('GraphEdits', () => {
     await flushPromises()
     await wrapper.find('.graph-candidates button').trigger('click')
     await chooseSecond(wrapper)
+    await toNameStep(wrapper)
     await button(wrapper, '预览合并').trigger('click')
     await flushPromises()
     await button(wrapper, '确认合并并保存版本').trigger('click')
@@ -270,10 +312,12 @@ describe('GraphEdits', () => {
     await button(wrapper, '合并实体').trigger('click')
     await chooseSecond(wrapper)
     vi.mocked(graphApi.previewMerge).mockRejectedValueOnce(new ApiError('图谱已更新，请刷新', 409, 'graph_version_changed'))
+    await toNameStep(wrapper)
     await button(wrapper, '预览合并').trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('图谱已更新，请刷新')
     expect(wrapper.emitted('changed')).toHaveLength(1)
+    await toNameStep(wrapper)
     await button(wrapper, '预览合并').trigger('click')
     await flushPromises()
     let finish!: (value: typeof mutation) => void
