@@ -9,7 +9,8 @@ import type {
   SearchHit,
   SectionPage,
 } from './types'
-import type { GraphFilters, GraphGroup, GraphNode, GraphPage, GraphResult, GraphStatus, GraphJob } from './graphTypes'
+import type { GraphFilters, GraphGroup, GraphNode, GraphPage, GraphResult, GraphStatus, GraphJob, GraphUnresolved, GraphHistory,
+  GraphMergeRequest, GraphMergePreview, GraphCorrection, GraphMutation } from './graphTypes'
 
 export class ApiError extends Error {
   constructor(
@@ -48,6 +49,24 @@ function graphParams(version: string, filters: GraphFilters = {}, extra: Record<
 }
 const graphBase = (id: string) => `/api/novels/${encodeURIComponent(id)}/graph`
 export const graphApi = {
+  history: (id: string, offset = 0) => request<GraphHistory>(`${graphBase(id)}/history?offset=${offset}&limit=20`),
+  previewMerge: (id: string, body: GraphMergeRequest) => request<GraphMergePreview>(`${graphBase(id)}/merges/preview`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  }),
+  merge: (id: string, body: GraphMergeRequest) => request<GraphMutation>(`${graphBase(id)}/merges`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  }),
+  restore: (id: string, version: string, target: string) => request<GraphMutation>(`${graphBase(id)}/history/${encodeURIComponent(target)}/restore`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ version }),
+  }),
+  corrections: (id: string, version: string) => request<{ graph_version: string; items: GraphCorrection[] }>(
+    `${graphBase(id)}/corrections?${graphParams(version)}`),
+  skipCorrection: (id: string, version: string, correctionId: string) => request<GraphMutation>(
+    `${graphBase(id)}/corrections/${encodeURIComponent(correctionId)}/skip`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ version }),
+    }),
+  unresolved: (id: string, version: string, filters: GraphFilters, offset = 0) => request<GraphPage<GraphUnresolved>>(
+    `${graphBase(id)}/unresolved?${graphParams(version, filters, { offset: String(offset) })}`),
   status: (id: string, signal?: AbortSignal) => request<GraphStatus>(`${graphBase(id)}/status`, { signal }),
   build: (id: string, mode: 'start' | 'resume' | 'rebuild', jobId?: string) => request<GraphJob>(`${graphBase(id)}/builds`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode, ...(jobId ? { job_id: jobId } : {}) }),

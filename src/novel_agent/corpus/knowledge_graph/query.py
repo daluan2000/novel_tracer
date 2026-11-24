@@ -74,7 +74,37 @@ class GraphReadSession:
             params = (self.graph_version, entity_id, start, end)
             total = db.execute("SELECT COUNT(*) FROM graph_mentions WHERE version=? AND entity_id=? AND section_order BETWEEN ? AND ?", params).fetchone()[0]
             mentions = db.execute("SELECT payload FROM graph_mentions WHERE version=? AND entity_id=? AND section_order BETWEEN ? AND ? ORDER BY start_char LIMIT ? OFFSET ?", (*params, limit, offset)).fetchall()
-            return {**self.meta(), "entity": self._node(row), "items": [json.loads(m[0]) for m in mentions], "offset": offset, "limit": limit, "total": total}
+            node = self._node(row)
+            identity = []
+            for mid in node.get("identity_evidence", [])[:6]:
+                source = db.execute("SELECT payload FROM graph_source_mentions WHERE version=? AND mention_id=? AND section_order BETWEEN ? AND ?", (self.graph_version, mid, start, end)).fetchone()
+                if source:
+                    record = json.loads(source[0])
+                    identity.append({"mention_id": mid, "surface": record["surface"], "anchor": record["anchor"], "contexts": record["contexts"][:1]})
+            return {**self.meta(), "entity": node, "identity_evidence": identity,
+                    "items": [json.loads(m[0]) for m in mentions], "offset": offset, "limit": limit, "total": total}
+
+    def unresolved(self, offset=0, limit=20, start_section_id=None, end_section_id=None):
+        if offset < 0 or not 1 <= limit <= 100:
+            raise GraphError("invalid_query", "无效的分页参数。", 422)
+        start, end = self.scope(start_section_id, end_section_id)
+        with self.storage.connect() as db:
+            self._check(db)
+            params = (self.graph_version, start, end)
+            total = db.execute("SELECT COUNT(*) FROM graph_source_mentions WHERE version=? AND status='pending' AND section_order BETWEEN ? AND ?", params).fetchone()[0]
+            rows = db.execute("SELECT payload FROM graph_source_mentions WHERE version=? AND status='pending' AND section_order BETWEEN ? AND ? ORDER BY start_char,mention_id LIMIT ? OFFSET ?", (*params, limit, offset)).fetchall()
+            items = []
+            for row in rows:
+                record = json.loads(row[0])
+                candidates = []
+                for eid in record["candidate_ids"]:
+                    entity = db.execute("SELECT * FROM graph_entities WHERE version=? AND entity_id=?", (self.graph_version, eid)).fetchone()
+                    if entity is not None:
+                        candidates.append(self._node(entity))
+                items.append({"mention_id": record["mention_id"], "surface": record["surface"],
+                    "type": record["type"], "anchor": record["anchor"], "reason": record["reason"],
+                    "contexts": record["contexts"][:2], "candidates": candidates})
+        return {**self.meta(), "items": items, "total": total, "offset": offset, "limit": limit}
 
     def _groups(self, db, relation_id, start, end, offset=0, limit=1):
         params = (self.graph_version, relation_id, start, end)

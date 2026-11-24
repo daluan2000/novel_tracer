@@ -38,6 +38,35 @@ PHASE_SCHEMA = """CREATE TABLE graph_phase_timings (
  job_id TEXT NOT NULL REFERENCES graph_jobs(job_id), phase TEXT NOT NULL,
  elapsed_seconds REAL NOT NULL DEFAULT 0, PRIMARY KEY(job_id,phase))"""
 
+IDENTITY_SCHEMA = """
+CREATE TABLE IF NOT EXISTS graph_source_mentions (
+ version TEXT NOT NULL REFERENCES graph_versions(version), mention_id TEXT NOT NULL,
+ entity_id TEXT, status TEXT NOT NULL CHECK(status IN ('resolved','pending','filtered')),
+ section_order INTEGER NOT NULL, start_char INTEGER NOT NULL, payload TEXT NOT NULL,
+ PRIMARY KEY(version,mention_id));
+CREATE INDEX IF NOT EXISTS graph_pending_mentions ON graph_source_mentions(version,status,section_order,start_char);
+CREATE TABLE IF NOT EXISTS graph_identity_decisions (
+ version TEXT NOT NULL REFERENCES graph_versions(version), decision_id TEXT NOT NULL,
+ payload TEXT NOT NULL, PRIMARY KEY(version,decision_id));
+CREATE TABLE IF NOT EXISTS graph_fact_candidates (
+ version TEXT NOT NULL REFERENCES graph_versions(version), candidate_id TEXT NOT NULL,
+ status TEXT NOT NULL CHECK(status IN ('resolved','pending','filtered')), payload TEXT NOT NULL,
+ PRIMARY KEY(version,candidate_id));
+"""
+
+REVISION_SCHEMA = """
+CREATE TABLE IF NOT EXISTS graph_revisions (
+ version TEXT PRIMARY KEY REFERENCES graph_versions(version),
+ parent_version TEXT REFERENCES graph_versions(version),
+ operation TEXT NOT NULL CHECK(operation IN ('build','merge','restore','correction')),
+ details TEXT NOT NULL DEFAULT '{}', corrections TEXT NOT NULL DEFAULT '[]',
+ origin_job_id TEXT REFERENCES graph_jobs(job_id),
+ restored_from TEXT REFERENCES graph_versions(version));
+CREATE TABLE IF NOT EXISTS graph_build_bases (
+ version TEXT PRIMARY KEY REFERENCES graph_versions(version),
+ parent_version TEXT REFERENCES graph_versions(version), corrections TEXT NOT NULL DEFAULT '[]');
+"""
+
 SCHEMA = """
 BEGIN IMMEDIATE;
 CREATE TABLE graph_versions (
@@ -103,7 +132,7 @@ CREATE TABLE graph_evidence_spans (
  section_order INTEGER NOT NULL, payload TEXT NOT NULL,
  PRIMARY KEY(version,group_id,span_index),
  FOREIGN KEY(version,group_id) REFERENCES graph_evidence_groups(version,group_id) ON DELETE CASCADE);
-""" + PHASE_SCHEMA + ";\nPRAGMA user_version=2;\nCOMMIT;\n"
+""" + PHASE_SCHEMA + ";\n" + IDENTITY_SCHEMA + REVISION_SCHEMA + "\nPRAGMA user_version=4;\nCOMMIT;\n"
 
 
 class GraphStorage:
@@ -150,9 +179,32 @@ class GraphStorage:
             elif version == 1:
                 db.execute("BEGIN IMMEDIATE")
                 db.execute(PHASE_SCHEMA)
-                db.execute("PRAGMA user_version=2")
-            elif version != 2:
+                for statement in IDENTITY_SCHEMA.split(";"):
+                    if statement.strip():
+                        db.execute(statement)
+                db.execute("PRAGMA user_version=3")
+            elif version == 2:
+                db.execute("BEGIN IMMEDIATE")
+                for statement in IDENTITY_SCHEMA.split(";"):
+                    if statement.strip():
+                        db.execute(statement)
+                db.execute("PRAGMA user_version=3")
+            elif version not in {3, 4}:
                 raise GraphError("graph_storage_unavailable", "图谱数据库版本不兼容。", 503)
+            if version in {1, 2, 3}:
+                if not db.in_transaction:
+                    db.execute("BEGIN IMMEDIATE")
+                for statement in REVISION_SCHEMA.split(";"):
+                    if statement.strip():
+                        db.execute(statement)
+                db.execute("PRAGMA user_version=4")
+            # Preserve published legacy snapshots without inventing lost merges.
+            previous = {}
+            for row in db.execute("SELECT * FROM graph_versions WHERE state IN ('published','superseded','invalid') ORDER BY COALESCE(published_at,created_at),rowid").fetchall():
+                job = db.execute("SELECT job_id FROM graph_jobs WHERE version=? ORDER BY rowid DESC LIMIT 1", (row["version"],)).fetchone()
+                db.execute("INSERT OR IGNORE INTO graph_revisions(version,parent_version,operation,origin_job_id) VALUES(?,?,'build',?)",
+                           (row["version"], previous.get(row["novel_id"]), job[0] if job else None))
+                previous[row["novel_id"]] = row["version"]
             if db.execute("PRAGMA quick_check").fetchone()[0] != "ok" or db.execute("PRAGMA foreign_key_check").fetchone():
                 raise GraphError("graph_storage_unavailable", "图谱数据库校验失败。", 503)
             jobs = db.execute("SELECT job_id FROM graph_jobs WHERE status IN ('queued','building','stopping')").fetchall()
@@ -218,6 +270,53 @@ class GraphStorage:
             db.execute("INSERT OR REPLACE INTO graph_units VALUES(?,?,?,?,?,?,?)", (version, unit_id, kind, sequence, input_hash, status, encode(result)))
 
     @retry_busy
+    def save_predictions(self, version: str, records):
+        """Save every per-record prediction together before applying a batch."""
+        with self.connect() as db:
+            for unit_id, input_hash, result, sequence in records:
+                db.execute("INSERT OR REPLACE INTO graph_units VALUES(?,?,?,?,?,'completed',?)",
+                           (version, unit_id, "resolve_prediction", sequence, input_hash, encode(result)))
+
+    @retry_busy
+    def prepare_resolution(self, version: str, entity_count: int, identity_count: int) -> dict:
+        """Reserve progress units in one transaction and load resumable decisions."""
+        with self.connect() as db:
+            records = [(version, f"resolve:{i}", "resolve", i, "", "pending", "{}") for i in range(entity_count)]
+            records.extend((version, f"resolve:identity:{i}", "resolve", entity_count + i, "", "pending", "{}")
+                           for i in range(identity_count))
+            db.executemany("INSERT OR IGNORE INTO graph_units VALUES(?,?,?,?,?,?,?)", records)
+            return {row["unit_id"]: {"input_hash": row["input_hash"], "result": json.loads(row["result_json"])}
+                    for row in db.execute("SELECT unit_id,input_hash,result_json FROM graph_units WHERE version=? AND kind IN ('resolve','resolve_batch','resolve_prediction') AND status='completed'", (version,))}
+
+    def identity_checkpoints(self, version: str) -> dict:
+        with self.connect() as db:
+            return {r["unit_id"]: {"input_hash": r["input_hash"], "result": json.loads(r["result_json"])}
+                    for r in db.execute("SELECT * FROM graph_units WHERE version=? AND kind IN ('cataloging','linking','auditing') AND status='completed'", (version,))}
+
+    @retry_busy
+    def save_identity(self, version: str, result):
+        with self.connect() as db:
+            for table in ("graph_source_mentions", "graph_identity_decisions", "graph_fact_candidates"):
+                db.execute(f"DELETE FROM {table} WHERE version=?", (version,))
+            for binding in result.bindings:
+                mention = result.inventory.mentions[binding["mention_id"]]
+                payload = {**mention, **binding}
+                db.execute("INSERT INTO graph_source_mentions VALUES(?,?,?,?,?,?,?)", (version,
+                    binding["mention_id"], binding["entity_id"], binding["status"],
+                    mention["anchor"]["section_order"], mention["anchor"]["start_char"], encode(payload)))
+            for index, decision in enumerate(result.decisions):
+                db.execute("INSERT INTO graph_identity_decisions VALUES(?,?,?)", (version, str(index), encode(decision)))
+            for fact in result.facts:
+                db.execute("INSERT INTO graph_fact_candidates VALUES(?,?,?,?)", (version, fact["candidate_id"], fact["status"], encode(fact)))
+
+    @retry_busy
+    def quality_stats(self, version: str, stats: dict):
+        with self.connect() as db:
+            counts = json.loads(db.execute("SELECT counts_json FROM graph_versions WHERE version=?", (version,)).fetchone()[0])
+            counts["quality_stats"] = stats
+            db.execute("UPDATE graph_versions SET counts_json=? WHERE version=?", (encode(counts), version))
+
+    @retry_busy
     def split_unit(self, version: str, unit_id: str, children: list[tuple[str, str]], sequence: int, *, min_chars: int = 500, candidate_counts: dict | None = None):
         """Persist both halves before requesting either, including across restarts."""
         with self.connect() as db:
@@ -242,24 +341,32 @@ class GraphStorage:
     @retry_busy
     def materialize(self, version: str, entities: list[dict], relations: list[dict]):
         with self.connect() as db:
-            for table in ("graph_evidence_spans", "graph_evidence_groups", "graph_relations", "graph_mentions", "graph_aliases", "graph_entities"):
-                db.execute(f"DELETE FROM {table} WHERE version=?", (version,))
-            for e in entities:
-                db.execute("INSERT INTO graph_entities VALUES(?,?,?,?,?,?,?)", (version, e["id"], e["type"], e["name"], normalize(e["name"]), min(m["section_order"] for m in e["mentions"]), encode({"aliases": e["aliases"]})))
-                for alias in dict.fromkeys([e["name"], *e["aliases"]]):
-                    db.execute("INSERT OR IGNORE INTO graph_aliases VALUES(?,?,?,?)", (version, e["id"], alias, normalize(alias)))
-                for mention in e["mentions"]:
-                    mid = digest([mention["start_char"], mention["end_char"], e["type"]])
-                    db.execute("INSERT OR IGNORE INTO graph_mentions VALUES(?,?,?,?,?,?,?)", (version, mid, e["id"], mention["section_order"], mention["start_char"], mention["end_char"], encode(mention)))
-            for r in relations:
-                db.execute("INSERT INTO graph_relations VALUES(?,?,?,?,?,?,?)", (version, r["id"], r["source"], r["target"], r["type"], r["polarity"], r["statement_mode"]))
-                for group in r["groups"]:
-                    evidence_hash = digest(sorted((s["start_char"], s["end_char"]) for s in group))
-                    gid = digest([r["id"], evidence_hash])
-                    db.execute("INSERT OR IGNORE INTO graph_evidence_groups VALUES(?,?,?,?,?,?)", (version, gid, r["id"], min(s["section_order"] for s in group), max(s["section_order"] for s in group), evidence_hash))
-                    for i, span in enumerate(group):
-                        db.execute("INSERT OR IGNORE INTO graph_evidence_spans VALUES(?,?,?,?,?)", (version, gid, i, span["section_order"], encode(span)))
-            db.execute("UPDATE graph_versions SET counts_json=? WHERE version=?", (encode({"entity_count": len(entities), "relation_count": len(relations)}), version))
+            self.materialize_in(db, version, entities, relations)
+
+    def materialize_in(self, db, version, entities, relations):
+        """Materialize inside the caller's atomic snapshot transaction."""
+        for table in ("graph_evidence_spans", "graph_evidence_groups", "graph_relations", "graph_mentions", "graph_aliases", "graph_entities"):
+            db.execute(f"DELETE FROM {table} WHERE version=?", (version,))
+        for e in entities:
+            payload = {"aliases": e["aliases"]}
+            payload.update({key: e[key] for key in ("name_forms", "person_name", "identity_evidence", "description") if key in e})
+            db.execute("INSERT INTO graph_entities VALUES(?,?,?,?,?,?,?)", (version, e["id"], e["type"], e["name"], normalize(e["name"]), min(m["section_order"] for m in e["mentions"]), encode(payload)))
+            for alias in dict.fromkeys([e["name"], *e["aliases"]]):
+                db.execute("INSERT OR IGNORE INTO graph_aliases VALUES(?,?,?,?)", (version, e["id"], alias, normalize(alias)))
+            for mention in e["mentions"]:
+                mid = digest([mention["start_char"], mention["end_char"], e["type"]])
+                db.execute("INSERT OR IGNORE INTO graph_mentions VALUES(?,?,?,?,?,?,?)", (version, mid, e["id"], mention["section_order"], mention["start_char"], mention["end_char"], encode(mention)))
+        for r in relations:
+            db.execute("INSERT INTO graph_relations VALUES(?,?,?,?,?,?,?)", (version, r["id"], r["source"], r["target"], r["type"], r["polarity"], r["statement_mode"]))
+            for group in r["groups"]:
+                evidence_hash = digest(sorted((s["start_char"], s["end_char"]) for s in group))
+                gid = digest([r["id"], evidence_hash])
+                db.execute("INSERT OR IGNORE INTO graph_evidence_groups VALUES(?,?,?,?,?,?)", (version, gid, r["id"], min(s["section_order"] for s in group), max(s["section_order"] for s in group), evidence_hash))
+                for i, span in enumerate(group):
+                    db.execute("INSERT OR IGNORE INTO graph_evidence_spans VALUES(?,?,?,?,?)", (version, gid, i, span["section_order"], encode(span)))
+        counts = json.loads(db.execute("SELECT counts_json FROM graph_versions WHERE version=?", (version,)).fetchone()[0])
+        counts.update(entity_count=len(entities), relation_count=len(relations))
+        db.execute("UPDATE graph_versions SET counts_json=? WHERE version=?", (encode(counts), version))
 
     @retry_busy
     def publish(self, novel_id: str, version: str, job_id: str) -> bool:
@@ -273,6 +380,8 @@ class GraphStorage:
                 raise ValueError("graph_units_incomplete")
             if db.execute("PRAGMA foreign_key_check").fetchone():
                 raise ValueError("graph_foreign_key_failed")
+            if db.execute("SELECT 1 FROM graph_source_mentions m WHERE m.version=? AND m.status='resolved' AND NOT EXISTS (SELECT 1 FROM graph_entities e WHERE e.version=m.version AND e.entity_id=m.entity_id) LIMIT 1", (version,)).fetchone():
+                raise ValueError("graph_identity_binding_invalid")
             missing = db.execute("SELECT 1 FROM graph_relations r WHERE version=? AND NOT EXISTS (SELECT 1 FROM graph_evidence_groups g WHERE g.version=r.version AND g.relation_id=r.relation_id) LIMIT 1", (version,)).fetchone()
             if missing:
                 raise ValueError("graph_evidence_missing")
@@ -280,4 +389,7 @@ class GraphStorage:
             db.execute("UPDATE graph_versions SET state='published',published_at=? WHERE novel_id=? AND version=? AND state='staging'", (now(), novel_id, version))
             db.execute("INSERT INTO graph_novels VALUES(?,?) ON CONFLICT(novel_id) DO UPDATE SET active_version=excluded.active_version", (novel_id, version))
             db.execute("UPDATE graph_jobs SET status='completed',updated_at=? WHERE job_id=?", (now(), job_id))
+            base = db.execute("SELECT * FROM graph_build_bases WHERE version=?", (version,)).fetchone()
+            db.execute("INSERT INTO graph_revisions(version,parent_version,operation,corrections,origin_job_id) VALUES(?,?,'build',?,?)",
+                       (version, base["parent_version"] if base else None, base["corrections"] if base else "[]", job_id))
         return True

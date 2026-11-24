@@ -7,7 +7,7 @@ import KnowledgeGraphPanel from './KnowledgeGraphPanel.vue'
 
 vi.mock('../api', async importOriginal => {
   const actual = await importOriginal<typeof import('../api')>()
-  return { ...actual, api: { sections: vi.fn(), context: vi.fn() }, graphApi: { status: vi.fn(), build: vi.fn(), stop: vi.fn(), search: vi.fn(), neighbors: vi.fn(), paths: vi.fn(), evidence: vi.fn() } }
+  return { ...actual, api: { sections: vi.fn(), context: vi.fn() }, graphApi: { status: vi.fn(), build: vi.fn(), stop: vi.fn(), search: vi.fn(), neighbors: vi.fn(), paths: vi.fn(), evidence: vi.fn(), unresolved: vi.fn() } }
 })
 const novel = { novel_id: 'book-1' } as NovelInfo
 const node: GraphNode = { id: 'a', name: '甲', type: 'person', aliases: [] }
@@ -23,10 +23,30 @@ beforeEach(() => {
   vi.mocked(api.sections).mockResolvedValue({ items: [], total: 0, offset: 0, limit: 200 })
   vi.mocked(graphApi.search).mockResolvedValue({ ...result, items: [node], offset: 0, limit: 20, total: 1 })
   vi.mocked(graphApi.neighbors).mockResolvedValue(result)
+  vi.mocked(graphApi.unresolved).mockResolvedValue({ ...result, items: [], total: 0, offset: 0, limit: 20 })
   vi.mocked(api.context).mockResolvedValue([{ chunk_id: 'c1', section_id: 's1', section_title: '第一章', start_line: 1, end_line: 1, text: span.quote }])
 })
 
 describe('KnowledgeGraphPanel', () => {
+  it('loads pending mentions as source records and discards them when changing books', async () => {
+    vi.mocked(graphApi.unresolved).mockResolvedValue({ ...result, items: [{ mention_id: 'm1', surface: '宝玉',
+      type: 'person', anchor: span, contexts: [{ ...span, quote: '甄家的太太带了他们家的宝玉来了。' }],
+      candidates: [{ ...node, name: '贾宝玉' }, { ...node, id: 'z', name: '甄宝玉' }], reason: 'competing_identities' }],
+      total: 1, offset: 0, limit: 20 })
+    const wrapper = mount(KnowledgeGraphPanel, { props: { novel }, global: { stubs: { KnowledgeGraphCanvas: true } } })
+    await flushPromises()
+    expect(graphApi.unresolved).not.toHaveBeenCalled()
+    await wrapper.find('.graph-unresolved button').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.graph-unresolved').text()).toContain('当前范围 1 处待确认提及')
+    expect(wrapper.find('.graph-unresolved').text()).toContain('贾宝玉、甄宝玉')
+    expect(wrapper.find('.graph-unresolved').text()).toContain('甄家的太太')
+    expect(graphApi.neighbors).not.toHaveBeenCalled()
+    await wrapper.setProps({ novel: { ...novel, novel_id: 'book-2' } })
+    await flushPromises()
+    expect(wrapper.find('.graph-unresolved').text()).not.toContain('甄家的太太')
+    wrapper.unmount()
+  })
   it('shows concurrency, separate wall/model times, and readable rate-limit retries', async () => {
     vi.mocked(graphApi.status).mockResolvedValue({ ...status,
       extraction_concurrency: 4, resolution_concurrency: 4, rate_limit_retries: 3,
@@ -36,6 +56,9 @@ describe('KnowledgeGraphPanel', () => {
         resolution: { completed: 16, total: 16 }, entity_count: 4, relation_count: 2, elapsed_seconds: 10,
         phase_elapsed_seconds: { extracting: 3.2, resolving: 6.5 },
         phase_model_seconds: { extracting: 12.1, resolving: 23.4 },
+        quality_stats: { candidates_before: { person: 12, item: 20 }, candidates_after: { person: 12, item: 2 },
+          entities_after: { person: 3, item: 1 }, filtered_reasons: { low_frequency_background: 18 },
+          minimum_mentions: 3, ambiguous_count: 2, identity_rejected_count: 4, batch_request_count: 5 },
         usage: { request_count: 20, reported_input_tokens: 100, reported_output_tokens: 100,
           unknown_request_count: 0, failed_request_count: 1 },
         events: [{ code: 'graph_model_rate_limit_retry', level: 'warning', created_at: '' }],
@@ -50,6 +73,11 @@ describe('KnowledgeGraphPanel', () => {
     expect(wrapper.text()).toContain('并发时可大于实际耗时')
     expect(wrapper.text()).toContain('正在等待后重试')
     expect(wrapper.text()).not.toContain('graph_model_rate_limit_retry')
+    expect(wrapper.text()).toContain('物品：候选记录 20 → 2 · 最终实体 1')
+    expect(wrapper.text()).toContain('低频背景实体：过滤 18 项')
+    expect(wrapper.text()).toContain('拒绝身份线索 4 条')
+    expect(wrapper.text()).toContain('身份不确定 2 次')
+    expect(wrapper.text()).toContain('批量消歧请求 5 次')
     wrapper.unmount()
   })
   it('shows all aliases in search candidates and selected entities for both path endpoints', async () => {

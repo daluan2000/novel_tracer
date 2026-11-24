@@ -8,6 +8,13 @@ export interface GraphGroup { id: string; spans: GraphSpan[] }
 export interface GraphNode {
   id: string; name: string; type: string; aliases: string[]
   first_mention?: GraphSpan; match_kind?: string
+  name_forms?: Array<{ name: string; kind: 'full_name' | 'given_name' | 'address' | 'alias' | 'proper_name' }>
+  person_name?: { family_name: string | null; given_name: string | null } | null
+  identity_evidence?: string[]
+}
+export interface GraphUnresolved {
+  mention_id: string; surface: string; type: string; anchor: GraphSpan
+  contexts: GraphSpan[]; candidates: GraphNode[]; reason: string
 }
 export interface GraphEdge {
   id: string; source: string; target: string; type: string
@@ -21,15 +28,23 @@ export interface GraphResult extends GraphMeta {
   nodes: GraphNode[]; edges: GraphEdge[]; paths: Array<{ node_ids: string[]; edge_ids: string[] }>
 }
 export interface GraphPage<T> extends GraphMeta { items: T[]; offset: number; limit: number; total: number }
+export interface GraphQualityStats {
+  candidates_before: Record<string, number>; candidates_after: Record<string, number>
+  entities_after?: Record<string, number>; filtered_reasons: Record<string, number>
+  minimum_mentions: number; ambiguous_count: number; identity_rejected_count: number; batch_request_count: number
+  mention_count?: number; resolved_mentions?: number; pending_mentions?: number; pending_facts?: number; binding_coverage?: number
+}
 export interface GraphJob {
   job_id: string; graph_version: string
   status: 'queued' | 'building' | 'stopping' | 'completed' | 'failed' | 'stopped'
-  phase: 'extracting' | 'resolving' | 'materializing' | 'publishing'
+  phase: 'extracting' | 'resolving' | 'cataloging' | 'linking' | 'auditing' | 'materializing' | 'publishing'
   stop_requested: boolean; can_resume: boolean; error_code: string | null
   extraction: { completed: number; total: number; cached?: number }; resolution: { completed: number; total: number }
+  catalog?: { completed: number; total: number }; binding?: { completed: number; total: number }; audit?: { completed: number; total: number }
   entity_count: number; relation_count: number; elapsed_seconds: number
   phase_elapsed_seconds?: Partial<Record<GraphJob['phase'], number>>
   phase_model_seconds?: Partial<Record<GraphJob['phase'], number>>
+  quality_stats?: GraphQualityStats | null
   usage: { request_count: number; reported_input_tokens: number; reported_output_tokens: number; unknown_request_count: number; failed_request_count: number }
   events: Array<{ code: string; level: string; created_at: string }>
 }
@@ -39,7 +54,34 @@ export interface GraphStatus {
   request_timeout_seconds?: number | null; timeout_retries?: number | null; max_output_tokens?: number | null
   extraction_concurrency?: number | null; resolution_concurrency?: number | null; rate_limit_retries?: number | null
   job: GraphJob | null; counts?: { entity_count: number; relation_count: number }
+  revision?: { operation: GraphRevisionOperation; pending_corrections: number }
   ontology: { entity_types: string[]; relation_types: Array<{ type: string; label: string; symmetric: boolean }> }
 }
 export interface GraphFilters { startChapterId?: string; endChapterId?: string; entityTypes?: string[]; relationTypes?: string[] }
 export interface GraphContext { span: GraphSpan; chunks: NovelChunk[] }
+
+export type GraphRevisionOperation = 'build' | 'merge' | 'restore' | 'correction'
+export interface GraphRevision {
+  version: string; parent_version: string | null; operation: GraphRevisionOperation
+  created_at: string; details: Record<string, unknown>; restored_from: string | null
+  entity_count: number; relation_count: number; current: boolean; can_restore: boolean
+  restore_blocked_reason: string | null
+}
+export interface GraphHistory {
+  graph_version: string | null; items: GraphRevision[]; total: number; offset: number; limit: number
+}
+export interface GraphMergeRequest {
+  version: string; entity_ids: string[]; canonical_name: string; replaces_correction_id?: string
+}
+export interface GraphMergePreview {
+  graph_version: string
+  entities: Array<{ id: string; name: string; aliases: string[]; mention_count: number }>
+  target: { id: string; name: string; aliases: string[]; mention_count: number; mention_count_before: number }
+  relation_count_before: number; relation_count_after: number; self_relations_removed: number
+}
+export interface GraphCorrection {
+  id: string; basis_version: string; source_name: string; target_name: string
+  entity_names?: string[]
+  status: 'applied' | 'satisfied' | 'pending' | 'skipped'; reason: string | null
+}
+export interface GraphMutation { graph_version: string; operation: GraphRevisionOperation; details: Record<string, unknown> }

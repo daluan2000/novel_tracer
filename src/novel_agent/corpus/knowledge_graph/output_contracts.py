@@ -1,5 +1,6 @@
 """Wire-format guidance, independent of semantic extraction rules/checkpoints."""
-from .models import CompactExtractionBatch, ExtractionBatch, ResolutionDecision
+from .models import (BatchResolutionDecision, CatalogDecision, CompactExtractionBatch,
+                     ExtractionBatch, MentionBindingBatch, ResolutionDecision)
 
 
 _COMMON = """输出格式检查（提交前逐项核对）：
@@ -16,12 +17,14 @@ statement_mode 只能是 narration/character_claim。occurrence 为从 1 开始�
 _FULL = """调用 ExtractionBatch。实体使用 mentions；关系和身份线索使用 evidence。
 mentions/evidence 是锚点对象数组；每个锚点只含 span_id、quote、occurrence。
 span_id 只能取输入已有的片段编号；实体 mentions.quote 等于 name；name 长度为 1–100 字。
-description 可省略，填写时最多 300 字。关系及身份线索 evidence 必须有 1–3 个锚点，quote 为 1–600 字原文。
+description 可省略，填写时最多 300 字。plot_relevant 可省略，默认 false；设 true 时 importance_evidence 必须有1至3个锚点。
+关系及身份线索 evidence 必须有 1–3 个锚点，quote 为 1–600 字原文。
 不能使用精简格式的 evidence_ids，不能把实体的 span_id/occurrence 放在实体顶层。
 假设输入 core 是“张三拜李四为师。张三又名阿三。”，参数示例：
 {"entities":[{"local_id":"e1","name":"张三","type":"person","mentions":[{"span_id":"core","quote":"张三","occurrence":1}]},{"local_id":"e2","name":"李四","type":"person","mentions":[{"span_id":"core","quote":"李四","occurrence":1}]},{"local_id":"e3","name":"阿三","type":"person","mentions":[{"span_id":"core","quote":"阿三","occurrence":1}]}],"relations":[{"source":"e1","target":"e2","type":"disciple_of","polarity":"affirmed","statement_mode":"narration","evidence":[{"span_id":"core","quote":"张三拜李四为师。","occurrence":1}]}],"identity_links":[{"source":"e1","target":"e3","evidence":[{"span_id":"core","quote":"张三又名阿三。","occurrence":1}]}]}"""
 
-_COMPACT = """调用 CompactExtractionBatch。实体只含 local_id、name、type、span_id、occurrence。
+_COMPACT = """调用 CompactExtractionBatch。实体使用 local_id、name、type、span_id、occurrence，
+可选 plot_relevant（默认 false）和 importance_evidence_ids（设 true 时填写1至3个片段 id）。
 span_id 是输入 segments 中实际存在的 id，不是 region 值 core/before/after；name 长度为 1–100 字。
 关系只含 source、target、type、evidence_ids、polarity、statement_mode。
 身份线索只含 source、target、evidence_ids。evidence_ids 为 1–3 个输入片段 id 的字符串数组。
@@ -31,10 +34,29 @@ span_id 是输入 segments 中实际存在的 id，不是 region 值 core/before
 
 
 def output_contract(schema: type) -> str:
+    if schema is CatalogDecision:
+        return """调用 CatalogDecision，参数为一个 JSON 对象 {"profiles":[...]}。
+每个 profile 使用 anchor_mention_id、canonical_name、name_forms、supporting_mentions，
+可选 person_name={"family_name":...,"given_name":...} 和 description。
+name_forms 是 {"name":原文名称,"kind":"full_name|given_name|address|alias|proper_name"} 对象数组，kind 填单个枚举。
+所有名称和 mention_id 必须来自输入 cards；没有足够依据返回 {"profiles":[]}。
+supporting_mentions 最多24项：每种名称只选1处最清晰依据，并包含 anchor_mention_id。
+不要逐条列出所有提及，不要复制整章的编号清单；重复编号只写一次。"""
+    if schema is MentionBindingBatch:
+        return """调用 MentionBindingBatch，参数为 {"bindings":[...]}。
+每条为 {"mention_id":输入编号,"entity_id":候选编号或null,"supporting_mentions":[输入证据编号]}。
+每个输入提及返回一次；不确定用 entity_id=null，不能创造新候选。"""
     if schema is ExtractionBatch:
         return _COMMON + "\n" + _FULL
     if schema is CompactExtractionBatch:
         return _COMMON + "\n" + _COMPACT
+    if schema is BatchResolutionDecision:
+        return """只调用一次 BatchResolutionDecision 工具，参数为 {"decisions":[...]}。
+每个输入 entity_ref 恰好返回一次，按输入顺序；每条只含 entity_ref、decision、candidate_id、supporting_mentions。
+decision 只能为 merge/new/ambiguous。merge 的 candidate_id 仅引用已有候选 candidate_id 或本批更早的 entity_ref，
+且必须与该记录同名同类型；supporting_mentions 必须引用双方输入 excerpts 中支持身份一致的 mention_id。
+new/ambiguous 使用 candidate_id=null；无法确定时用 ambiguous，不能因同名就合并。
+示例：{"decisions":[{"entity_ref":"r0","decision":"ambiguous","candidate_id":null,"supporting_mentions":[]}]}。"""
     if schema is ResolutionDecision:
         return """只调用一次 ResolutionDecision 工具，参数为一个完整 JSON 对象，不添加其他字段或解释。
 decision 只能为 merge/new/ambiguous。merge 时 candidate_id 引用输入候选编号，

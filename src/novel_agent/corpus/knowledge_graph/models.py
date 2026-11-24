@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -32,6 +32,8 @@ class ExtractedEntity(StrictModel):
     name: str = Field(min_length=1, max_length=100)
     mentions: list[Anchor] = Field(min_length=1)
     description: str = Field(default="", max_length=300)
+    plot_relevant: bool = False
+    importance_evidence: list[Anchor] = Field(default_factory=list, max_length=3)
 
 
 class ExtractedRelation(StrictModel):
@@ -61,6 +63,8 @@ class CompactEntity(StrictModel):
     type: Literal["person", "place", "organization", "item", "skill", "concept"]
     span_id: str
     occurrence: int = Field(default=1, ge=1)
+    plot_relevant: bool = False
+    importance_evidence_ids: list[str] = Field(default_factory=list, max_length=3)
 
 
 class CompactRelation(StrictModel):
@@ -90,6 +94,47 @@ class ResolutionDecision(StrictModel):
     supporting_mentions: list[str] = Field(default_factory=list)
 
 
+class EntityResolutionDecision(ResolutionDecision):
+    entity_ref: str
+
+
+class BatchResolutionDecision(StrictModel):
+    decisions: list[EntityResolutionDecision] = Field(max_length=16)
+
+
+class NameForm(StrictModel):
+    name: str = Field(min_length=1, max_length=100)
+    kind: Literal["full_name", "given_name", "address", "alias", "proper_name"] = "proper_name"
+
+
+class PersonName(StrictModel):
+    family_name: str | None = None
+    given_name: str | None = None
+
+
+class CatalogProfileProposal(StrictModel):
+    anchor_mention_id: str
+    canonical_name: str = Field(min_length=1, max_length=100)
+    name_forms: list[NameForm] = Field(min_length=1, max_length=24)
+    supporting_mentions: list[str] = Field(min_length=1, max_length=24)
+    person_name: PersonName | None = None
+    description: str = Field(default="", max_length=300)
+
+
+class CatalogDecision(StrictModel):
+    profiles: list[CatalogProfileProposal] = Field(default_factory=list, max_length=16)
+
+
+class MentionBindingDecision(StrictModel):
+    mention_id: str
+    entity_id: str | None = None
+    supporting_mentions: list[str] = Field(default_factory=list, max_length=8)
+
+
+class MentionBindingBatch(StrictModel):
+    bindings: list[MentionBindingDecision] = Field(default_factory=list, max_length=16)
+
+
 class BuildRequest(StrictModel):
     mode: Literal["start", "resume", "rebuild"] = "start"
     job_id: str | None = None
@@ -99,3 +144,34 @@ class BuildRequest(StrictModel):
         if (self.mode == "resume") != (self.job_id is not None):
             raise ValueError("继续构建必须传 job_id；其他模式不允许传 job_id。")
         return self
+
+
+class RevisionRequest(StrictModel):
+    version: str = Field(min_length=1, max_length=64)
+
+
+class MergeEntitiesRequest(RevisionRequest):
+    entity_ids: list[Annotated[str, Field(min_length=1, max_length=100)]] | None = Field(default=None, min_length=2)
+    canonical_name: str | None = Field(default=None, min_length=1, max_length=100)
+    # Continue accepting previously shipped two-entity API clients.
+    source_id: str | None = Field(default=None, min_length=1, max_length=100)
+    target_id: str | None = Field(default=None, min_length=1, max_length=100)
+    replaces_correction_id: str | None = Field(default=None, min_length=1, max_length=64)
+
+    @model_validator(mode="after")
+    def validate_merge(self):
+        if self.entity_ids is not None:
+            if self.source_id is not None or self.target_id is not None:
+                raise ValueError("entity_ids 不能与旧版 source_id/target_id 同时使用。")
+            if len(set(self.entity_ids)) != len(self.entity_ids):
+                raise ValueError("不能重复选择同一实体。")
+            if not self.canonical_name or not self.canonical_name.strip():
+                raise ValueError("请输入合并后的实体名称。")
+            self.canonical_name = self.canonical_name.strip()
+        elif self.source_id is None or self.target_id is None or self.canonical_name is not None:
+            raise ValueError("请提供 entity_ids 和 canonical_name。")
+        return self
+
+    @property
+    def merge_ids(self):
+        return self.entity_ids if self.entity_ids is not None else [self.source_id, self.target_id]

@@ -28,9 +28,19 @@ class DelayedModel:
         def invoke(messages):
             time.sleep(self.delay)
             payload = json.loads(messages[1].content)
+            if schema.__name__ == "CatalogDecision":
+                return {"profiles": [{"anchor_mention_id": c["excerpts"][0]["mention_id"],
+                    "canonical_name": c["name"], "name_forms": [{"name": c["name"], "kind": "proper_name"}],
+                    "supporting_mentions": [c["excerpts"][0]["mention_id"]]} for c in payload["cards"]]}
+            if schema.__name__ == "BatchResolutionDecision":
+                return {"decisions": [{"entity_ref": entry["entity_ref"], "decision": "merge",
+                    "candidate_id": entry["candidates"][0]["candidate_id"], "supporting_mentions": [
+                        entry["entity"]["excerpts"][0]["mention_id"], entry["candidates"][0]["excerpts"][0]["mention_id"]]}
+                    for entry in payload["entities"]]}
             if schema.__name__ == "ResolutionDecision":
                 return {"decision": "merge", "candidate_id": payload["candidates"][0]["candidate_id"],
-                        "supporting_mentions": [payload["entity"]["excerpts"][0]["mention_id"]]}
+                        "supporting_mentions": [payload["entity"]["excerpts"][0]["mention_id"],
+                                                payload["candidates"][0]["excerpts"][0]["mention_id"]]}
             core = payload["spans"][0]["text"]
             name = re.search(r"人物[甲乙丙丁戊己庚辛]", core).group()
             return {"entities": [{"local_id": "e", "name": name, "type": "person",
@@ -87,7 +97,7 @@ def main():
     assert serial["requests"] == concurrent["requests"]
     assert serial["counts"] == concurrent["counts"]
     speedup = {phase: serial["phase_seconds"][phase] / concurrent["phase_seconds"][phase]
-               for phase in ("extracting", "resolving")}
+               for phase in ("extracting", "cataloging")}
     report = {"fixture": "8 independent names, 4 occurrences each, fixed model latency; no network",
               "delay_seconds": args.delay, "serial": serial, "concurrent": concurrent,
               "phase_speedup": speedup,

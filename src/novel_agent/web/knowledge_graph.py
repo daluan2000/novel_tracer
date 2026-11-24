@@ -7,7 +7,7 @@ from typing import Annotated
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 
-from novel_agent.corpus.knowledge_graph.models import BuildRequest, GraphError
+from novel_agent.corpus.knowledge_graph.models import BuildRequest, GraphError, MergeEntitiesRequest, RevisionRequest
 
 
 def graph_router(service):
@@ -51,12 +51,42 @@ def graph_router(service):
     def stop(novel_id: str, job_id: str):
         return call(lambda: service.stop(novel_id, job_id))
 
+    @router.get("/history")
+    def history(novel_id: str, offset: int = Query(0, ge=0), limit: int = Query(20, ge=1, le=100)):
+        return call(lambda: service.history(novel_id, offset, limit))
+
+    @router.post("/merges/preview")
+    def preview_merge(novel_id: str, body: MergeEntitiesRequest):
+        return call(lambda: service.merge_entities(novel_id, body, preview=True))
+
+    @router.post("/merges")
+    def merge(novel_id: str, body: MergeEntitiesRequest):
+        return call(lambda: service.merge_entities(novel_id, body))
+
+    @router.post("/history/{target_version}/restore")
+    def restore(novel_id: str, target_version: str, body: RevisionRequest):
+        return call(lambda: service.restore_revision(novel_id, body.version, target_version))
+
+    @router.get("/corrections")
+    def corrections(novel_id: str, version: str = Query(min_length=1, max_length=64)):
+        return call(lambda: service.manual_corrections(novel_id, version))
+
+    @router.post("/corrections/{correction_id}/skip")
+    def skip(novel_id: str, correction_id: str, body: RevisionRequest):
+        return call(lambda: service.skip_correction(novel_id, body.version, correction_id))
+
     @router.get("/entities")
     def entities(novel_id: str, version: str = Query(min_length=1, max_length=64),
                  q: str = Query(min_length=1, max_length=200), type: str | None = None,
                  offset: int = Query(0, ge=0), limit: int = Query(20, ge=1, le=100),
                  startChapterId: str | None = None, endChapterId: str | None = None):
         return call(lambda: reader(novel_id, version).search(q, type, offset, limit, **scope(novel_id, startChapterId, endChapterId)))
+
+    @router.get("/unresolved")
+    def unresolved(novel_id: str, version: str = Query(min_length=1, max_length=64),
+                   offset: int = Query(0, ge=0), limit: int = Query(20, ge=1, le=100),
+                   startChapterId: str | None = None, endChapterId: str | None = None):
+        return call(lambda: reader(novel_id, version).unresolved(offset, limit, **scope(novel_id, startChapterId, endChapterId)))
 
     @router.get("/entities/{entity_id}")
     def entity(novel_id: str, entity_id: str, version: str = Query(min_length=1, max_length=64),
