@@ -144,3 +144,13 @@ class BuildRequest(StrictModel):
         if (self.mode == "resume") != (self.job_id is not None):
             raise ValueError("继续构建必须传 job_id；其他模式不允许传 job_id。")
         return self
+
+
+class RevisionRequest(StrictModel):
+    version: str = Field(min_length=1, max_length=64)
+
+
+class MergeEntitiesRequest(RevisionRequest):
+    source_id: str = Field(min_length=1, max_length=100)
+    target_id: str = Field(min_length=1, max_length=100)
+    replaces_correction_id: str | None = Field(default=None, min_length=1, max_length=64)

@@ -30,6 +30,7 @@ from .models import (CatalogDecision, MentionBindingBatch, ExtractionBatch, Comp
 from .ontology import PARSER_VERSION, RULE_VERSION, digest, ontology_payload
 from .output_contracts import output_contract
 from .query import GraphReadSession
+from .revisions import GraphRevisions
 from .catalog import BINDING_PROMPT, CATALOG_PROMPT, build_catalog
 from .storage import GraphStorage, encode, now
 
@@ -108,6 +109,7 @@ def model_identity(config):
 class KnowledgeGraphService:
     def __init__(self, root: Path, novels, model_factory: Callable | None = None):
         self.storage = GraphStorage(root)
+        self.revisions = GraphRevisions(self.storage)
         self.novels, self.model_factory = novels, model_factory
         self.error_code = None
         self.lock = threading.RLock()
@@ -201,6 +203,7 @@ class KnowledgeGraphService:
                 if version:
                     with self.storage.connect() as db:
                         row = db.execute("SELECT counts_json FROM graph_versions WHERE version=?", (version,)).fetchone()
+                        result["revision"] = self.revisions.metadata(db, version)
                         counts = json.loads(row[0])
                         result["counts"] = {key: counts[key] for key in ("entity_count", "relation_count")}
         except sqlite3.Error:
@@ -303,6 +306,7 @@ class KnowledgeGraphService:
                     db.execute("INSERT INTO graph_jobs(job_id,novel_id,version,status,created_at,updated_at) VALUES(?,?,?,?,?,?)", (job_id, novel_id, version, "queued", now(), now()))
                     for i, w in enumerate(windows(item.corpus)):
                         db.execute("INSERT INTO graph_units VALUES(?,?,?,?,?,?,?)", (version, w.unit_id, "extract", i, digest(w.payload(item.corpus)), "pending", "{}"))
+                self.revisions.capture_build(db, novel_id, current["version"] if mode == "resume" else version)
             job = self.storage.job(novel_id, job_id if mode != "resume" else current["job_id"])
             response = self.job_payload(job, item, config)
             self.wake.set()
@@ -334,6 +338,31 @@ class KnowledgeGraphService:
             return self.reader(novel_id)
         except (GraphError, sqlite3.Error):
             return None
+
+    def history(self, novel_id, offset=0, limit=20):
+        self._available()
+        with self.lock:
+            return self.revisions.history(novel_id, source_identity(self.novels.get(novel_id)), offset, limit)
+
+    def merge_entities(self, novel_id, body, *, preview=False):
+        self._available()
+        with self.lock:
+            return self.revisions.merge(novel_id, body, source_identity(self.novels.get(novel_id)), preview=preview)
+
+    def restore_revision(self, novel_id, expected, target):
+        self._available()
+        with self.lock:
+            return self.revisions.restore(novel_id, expected, target, source_identity(self.novels.get(novel_id)))
+
+    def manual_corrections(self, novel_id, version):
+        with self.lock:
+            self.reader(novel_id, version)
+            return self.revisions.corrections(novel_id, version)
+
+    def skip_correction(self, novel_id, version, correction_id):
+        self._available()
+        with self.lock:
+            return self.revisions.skip(novel_id, version, correction_id, source_identity(self.novels.get(novel_id)))
 
     def _check_stop(self, job):
         latest = self.storage.job(job["novel_id"], job["job_id"])
@@ -609,6 +638,7 @@ class KnowledgeGraphService:
         self._check_stop(job)
         self._set_phase(job, "materializing")
         self.storage.materialize(job["version"], result.entities, result.relations)
+        self.revisions.apply_to_build(job["version"], source_identity(item))
         with self.lock:
             self._check_stop(job)
             if source_identity(item) != json.loads(self._version_source(job["version"])):

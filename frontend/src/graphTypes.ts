@@ -54,7 +54,33 @@ export interface GraphStatus {
   request_timeout_seconds?: number | null; timeout_retries?: number | null; max_output_tokens?: number | null
   extraction_concurrency?: number | null; resolution_concurrency?: number | null; rate_limit_retries?: number | null
   job: GraphJob | null; counts?: { entity_count: number; relation_count: number }
+  revision?: { operation: GraphRevisionOperation; pending_corrections: number }
   ontology: { entity_types: string[]; relation_types: Array<{ type: string; label: string; symmetric: boolean }> }
 }
 export interface GraphFilters { startChapterId?: string; endChapterId?: string; entityTypes?: string[]; relationTypes?: string[] }
 export interface GraphContext { span: GraphSpan; chunks: NovelChunk[] }
+
+export type GraphRevisionOperation = 'build' | 'merge' | 'restore' | 'correction'
+export interface GraphRevision {
+  version: string; parent_version: string | null; operation: GraphRevisionOperation
+  created_at: string; details: Record<string, unknown>; restored_from: string | null
+  entity_count: number; relation_count: number; current: boolean; can_restore: boolean
+  restore_blocked_reason: string | null
+}
+export interface GraphHistory {
+  graph_version: string | null; items: GraphRevision[]; total: number; offset: number; limit: number
+}
+export interface GraphMergeRequest {
+  version: string; source_id: string; target_id: string; replaces_correction_id?: string
+}
+export interface GraphMergePreview {
+  graph_version: string
+  source: { id: string; name: string; aliases: string[]; mention_count: number }
+  target: { id: string; name: string; aliases: string[]; mention_count: number; mention_count_before: number }
+  relation_count_before: number; relation_count_after: number; self_relations_removed: number
+}
+export interface GraphCorrection {
+  id: string; basis_version: string; source_name: string; target_name: string
+  status: 'applied' | 'satisfied' | 'pending' | 'skipped'; reason: string | null
+}
+export interface GraphMutation { graph_version: string; operation: GraphRevisionOperation; details: Record<string, unknown> }

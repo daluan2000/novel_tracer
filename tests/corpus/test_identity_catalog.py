@@ -14,7 +14,7 @@ from novel_agent.corpus.knowledge_graph.catalog import build_catalog, candidate_
 from novel_agent.corpus.knowledge_graph.concurrency import BuildStopped
 from novel_agent.corpus.knowledge_graph.inventory import collect_inventory
 from novel_agent.corpus.knowledge_graph.models import CatalogDecision, GraphOutputLimitError, MentionBindingBatch, PersonName
-from novel_agent.corpus.knowledge_graph.storage import GraphStorage, IDENTITY_SCHEMA, SCHEMA, now
+from novel_agent.corpus.knowledge_graph.storage import GraphStorage, IDENTITY_SCHEMA, REVISION_SCHEMA, SCHEMA, now
 from novel_agent.web.app import create_app
 
 from test_graph_quality import Checkpoints, batch, entity
@@ -231,7 +231,7 @@ def test_schema_two_migration_preserves_graph_and_adds_pending_tables(tmp_path):
     folder = tmp_path / "knowledge_graph"
     folder.mkdir()
     with sqlite3.connect(folder / "graph.sqlite3") as db:
-        db.executescript(SCHEMA.replace(IDENTITY_SCHEMA, "").replace("user_version=3", "user_version=2"))
+        db.executescript(SCHEMA.replace(IDENTITY_SCHEMA, "").replace(REVISION_SCHEMA, "").replace("user_version=4", "user_version=2"))
         db.execute("INSERT INTO graph_versions VALUES('v','n','published','f','{}','{}',?,NULL,'{}')", (now(),))
         db.execute("INSERT INTO graph_novels VALUES('n','v')")
     storage = GraphStorage(tmp_path)
@@ -239,7 +239,7 @@ def test_schema_two_migration_preserves_graph_and_adds_pending_tables(tmp_path):
     try:
         assert storage.active("n") == "v"
         with storage.connect() as db:
-            assert db.execute("PRAGMA user_version").fetchone()[0] == 3
+            assert db.execute("PRAGMA user_version").fetchone()[0] == 4
             assert db.execute("SELECT COUNT(*) FROM graph_source_mentions").fetchone()[0] == 0
     finally:
         storage.close()

@@ -17,7 +17,7 @@ from novel_agent.corpus.knowledge_graph.concurrency import BuildStopped, paralle
 from novel_agent.corpus.knowledge_graph.models import ResolutionDecision
 from novel_agent.corpus.knowledge_graph.resolution import resolve
 from novel_agent.corpus.knowledge_graph.service import rate_limit_delay
-from novel_agent.corpus.knowledge_graph.storage import GraphStorage, SCHEMA, PHASE_SCHEMA, now
+from novel_agent.corpus.knowledge_graph.storage import GraphStorage, SCHEMA, PHASE_SCHEMA, REVISION_SCHEMA, now
 from novel_agent.runtime.config import (graph_extraction_concurrency, graph_resolution_concurrency,
                                        graph_rate_limit_retries)
 from novel_agent.web.app import create_app
@@ -411,7 +411,7 @@ def test_schema_one_migrates_preserving_published_version_and_missing_times(tmp_
     folder = tmp_path / "knowledge_graph"
     folder.mkdir()
     with sqlite3.connect(folder / "graph.sqlite3") as db:
-        db.executescript(SCHEMA.replace(PHASE_SCHEMA + ";\n", "").replace("user_version=3", "user_version=1"))
+        db.executescript(SCHEMA.replace(PHASE_SCHEMA + ";\n", "").replace(REVISION_SCHEMA, "").replace("user_version=4", "user_version=1"))
         db.execute("INSERT INTO graph_versions(version,novel_id,state,fingerprint,source_identity,model_identity,created_at) VALUES('v','n','published','f','{}','{}',?)", (now(),))
         db.execute("INSERT INTO graph_novels VALUES('n','v')")
         db.execute("INSERT INTO graph_jobs(job_id,novel_id,version,status,created_at,updated_at) VALUES('j','n','v','completed',?,?)", (now(), now()))
@@ -424,6 +424,6 @@ def test_schema_one_migrates_preserving_published_version_and_missing_times(tmp_
         storage.add_phase_time("j", "extracting", 3)
         assert storage.phase_times("j") == {"extracting": 5}
         with storage.connect() as db:
-            assert db.execute("PRAGMA user_version").fetchone()[0] == 3
+            assert db.execute("PRAGMA user_version").fetchone()[0] == 4
     finally:
         storage.close()

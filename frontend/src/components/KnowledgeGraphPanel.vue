@@ -5,6 +5,7 @@ import type { NovelInfo, SectionItem } from '../types'
 import type { GraphContext, GraphEdge, GraphFilters, GraphGroup, GraphNode, GraphSpan, GraphUnresolved } from '../graphTypes'
 import { useKnowledgeGraph } from '../composables/useKnowledgeGraph'
 import KnowledgeGraphCanvas from './KnowledgeGraphCanvas.vue'
+import GraphEdits from './GraphEdits.vue'
 
 const props = defineProps<{ novel: NovelInfo }>()
 const novelId = computed(() => props.novel.novel_id)
@@ -245,6 +246,8 @@ onBeforeUnmount(() => { disposed = true; chapterSequence++; evidenceSequence++; 
     </details>
     <div v-else class="empty-state"><p>正在读取图谱状态…</p></div>
 
+    <GraphEdits v-if="status" :novel-id="novelId" :version="status.active_version || ''" :root="root" :running="running"
+        :pending-corrections="status.revision?.pending_corrections || 0" @changed="graph.refresh()" />
     <template v-if="status?.available">
       <details class="graph-unresolved"><summary>待确认的原文提及</summary>
         <p>这里保留尚无法确定身份的称呼及原文，相关事实暂不进入正式图谱。</p>
