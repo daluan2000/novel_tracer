@@ -1,7 +1,6 @@
 """Immutable graph snapshots and source-grounded manual merge rules."""
 from __future__ import annotations
 
-import copy
 import json
 import uuid
 from collections import Counter, defaultdict
@@ -38,28 +37,46 @@ def load_snapshot(db, version):
 
 
 def merge_snapshot(snapshot, source_id, target_id, version, canonical_name=None):
+    """Compatibility wrapper for two-entity callers and old recorded fixtures."""
+    return merge_entities_snapshot(snapshot, [source_id, target_id], target_id, version, canonical_name)
+
+
+def rename_entity(entity, canonical_name):
+    aliases = {normalize(name): name for name in [*entity["aliases"], entity["name"]]
+               if normalize(name) != normalize(canonical_name)}
+    entity["aliases"] = list(aliases.values())
+    entity["name"] = canonical_name
+    if not any(f["name"] == canonical_name for f in entity.get("name_forms", [])):
+        entity.setdefault("name_forms", []).append({"name": canonical_name, "kind": "proper_name"})
+
+
+def merge_entities_snapshot(snapshot, entity_ids, target_id, version, canonical_name=None):
     entities = snapshot["entities"]
-    if source_id == target_id:
-        raise GraphError("graph_invalid_merge", "请选择两个不同实体。", 422)
-    if source_id not in entities or target_id not in entities:
+    selected = set(entity_ids)
+    if len(entity_ids) < 2 or len(selected) != len(entity_ids) or target_id not in selected:
+        raise GraphError("graph_invalid_merge", "请至少选择两个不同实体。", 422)
+    if selected - entities.keys():
         raise GraphError("graph_object_not_found", "实体不存在或不属于当前小说和版本。", 404)
-    source, target = entities[source_id], entities[target_id]
-    if source["type"] != target["type"]:
+    participants = [entities[eid] for eid in entity_ids]
+    target = entities[target_id]
+    if any(e["type"] != target["type"] for e in participants):
         raise GraphError("graph_invalid_merge", "只能合并同一类型的实体。", 422)
     before = len(snapshot["relations"])
-    target["aliases"] = sorted({*source["aliases"], *target["aliases"], source["name"], target["name"]})
-    target["name"] = canonical_name or target["name"]
-    aliases = {normalize(name): name for name in target["aliases"] if normalize(name) != normalize(target["name"])}
-    target["aliases"] = list(aliases.values())
-    forms = {normalize(f["name"]): f for e in (source, target) for f in e.get("name_forms", [])}
-    for name in [target["name"], source["name"]]:
+    summaries = [{"id": e["id"], "name": e["name"], "aliases": list(e["aliases"]), "mention_count": len(e["mentions"])} for e in participants]
+    target_before = len(target["mentions"])
+    target["aliases"] = sorted({name for e in participants for name in [e["name"], *e["aliases"]]})
+    forms = {normalize(f["name"]): f for e in [*participants, target] for f in e.get("name_forms", [])}
+    for summary in summaries:
+        name = summary["name"]
         forms.setdefault(normalize(name), {"name": name, "kind": "proper_name"})
     target["name_forms"] = list(forms.values())
-    target["identity_evidence"] = sorted(set(source.get("identity_evidence", []) + target.get("identity_evidence", [])))
-    target["mentions"] = sorted({mention_key(m, target["type"]): m for e in (source, target)
+    target["identity_evidence"] = sorted({mid for e in participants for mid in e.get("identity_evidence", [])})
+    target["mentions"] = sorted({mention_key(m, target["type"]): m for e in participants
                                  for m in e["mentions"]}.values(), key=lambda m: m["start_char"])
-    del entities[source_id]
-    remap = lambda eid: target_id if eid == source_id else eid
+    rename_entity(target, canonical_name or target["name"])
+    for eid in selected - {target_id}:
+        del entities[eid]
+    remap = lambda eid: target_id if eid in selected else eid
     for binding in snapshot["bindings"]:
         binding["entity_id"] = remap(binding.get("entity_id"))
         binding["candidate_ids"] = sorted({remap(eid) for eid in binding.get("candidate_ids", [])})
@@ -82,8 +99,11 @@ def merge_snapshot(snapshot, source_id, target_id, version, canonical_name=None)
             if group not in merged["groups"]:
                 merged["groups"].append(group)
     snapshot["relations"] = list(edges.values())
-    return {"source": {"id": source_id, "name": source["name"], "aliases": source["aliases"], "mention_count": len(source["mentions"])},
-            "target": {"id": target_id, "name": target["name"], "aliases": target["aliases"], "mention_count": len(target["mentions"])},
+    sources = [e for e in summaries if e["id"] != target_id]
+    return {"entities": summaries, "sources": sources,
+            **({"source": sources[0]} if len(sources) == 1 else {}),
+            "target": {"id": target_id, "name": target["name"], "aliases": target["aliases"],
+                       "mention_count": len(target["mentions"]), "mention_count_before": target_before},
             "relation_count_before": before, "relation_count_after": len(edges), "self_relations_removed": self_edges}
 
 
@@ -189,20 +209,22 @@ class GraphRevisions:
             db.execute("BEGIN IMMEDIATE" if not preview else "BEGIN")
             row = self._check_write(db, novel_id, body.version, identity)
             snapshot = load_snapshot(db, body.version)
-            source, target = snapshot["entities"].get(body.source_id), snapshot["entities"].get(body.target_id)
-            before_target = copy.deepcopy(target)
-            details = merge_snapshot(snapshot, body.source_id, body.target_id, "preview" if preview else body.version)
-            details["target"]["mention_count_before"] = len(before_target["mentions"])
-            if preview:
-                return {"graph_version": body.version, **details}
             rules = json.loads(self._revision(db, body.version)["corrections"])
             if body.replaces_correction_id:
                 replaced = next((r for r in rules if r["id"] == body.replaces_correction_id and r["status"] in {"pending", "skipped"}), None)
                 if not replaced:
                     raise GraphError("graph_correction_not_found", "待确认人工修正不存在。", 404)
                 rules.remove(replaced)
-            rule = {"id": uuid.uuid4().hex, "basis_version": body.version, "source_entity_id": body.source_id,
-                    "target_entity_id": body.target_id, "source_name": source["name"], "target_name": before_target["name"],
+            entity_ids = body.merge_ids
+            # An internal anchor preserves IDs; users supply the resulting name.
+            target_id = body.target_id or next((eid for eid in entity_ids if eid in snapshot["entities"]
+                and normalize(snapshot["entities"][eid]["name"]) == normalize(body.canonical_name)), entity_ids[0])
+            details = merge_entities_snapshot(snapshot, entity_ids, target_id, body.version, body.canonical_name)
+            if preview:
+                return {"graph_version": body.version, **details}
+            names = [e["name"] for e in details["entities"]]
+            rule = {"id": uuid.uuid4().hex, "basis_version": body.version, "entity_ids": entity_ids,
+                    "target_entity_id": target_id, "entity_names": names, "source_name": "、".join(names), "target_name": details["target"]["name"],
                     "source_identity": identity, "status": "applied", "reason": None}
             rules.append(rule)
             version = self._clone(db, row)
@@ -256,7 +278,8 @@ class GraphRevisions:
                     basis = load_snapshot(db, rule["basis_version"])
                     ownership = {mention_key(m, e["type"]): e["id"] for e in snapshot["entities"].values() for m in e["mentions"]}
                     sides = []
-                    for eid in (rule["source_entity_id"], rule["target_entity_id"]):
+                    participant_ids = rule.get("entity_ids") or [rule["source_entity_id"], rule["target_entity_id"]]
+                    for eid in participant_ids:
                         entity = basis["entities"][eid]
                         keys = {mention_key(m, entity["type"]) for m in entity["mentions"]}
                         owners = {ownership.get(key) for key in keys}
@@ -264,17 +287,15 @@ class GraphRevisions:
                     if None in sides:
                         reason = "原文提及缺失或原身份已拆分，请重新选择实体"
                     elif any(ownership.get(mention_key(m, e["type"])) in sides for e in basis["entities"].values()
-                             if e["id"] not in {rule["source_entity_id"], rule["target_entity_id"]} for m in e["mentions"]):
+                             if e["id"] not in participant_ids for m in e["mentions"]):
                         reason = "新实体混入了原先其他身份，请核对原文"
-                    elif sides[0] != sides[1]:
-                        merge_snapshot(snapshot, sides[0], sides[1], version, rule["target_name"])
+                    elif len(set(sides)) > 1:
+                        target_id = sides[participant_ids.index(rule["target_entity_id"])]
+                        merge_entities_snapshot(snapshot, list(dict.fromkeys(sides)), target_id, version, rule["target_name"])
                         rule.update(status="applied", reason=None)
                     else:
                         entity = snapshot["entities"][sides[0]]
-                        entity["aliases"] = sorted(set(entity["aliases"] + [entity["name"]]) - {rule["target_name"]})
-                        entity["name"] = rule["target_name"]
-                        if not any(f["name"] == entity["name"] for f in entity.get("name_forms", [])):
-                            entity.setdefault("name_forms", []).append({"name": entity["name"], "kind": "proper_name"})
+                        rename_entity(entity, rule["target_name"])
                         rule.update(status="satisfied", reason=None)
                 if reason:
                     rule.update(status="pending", reason=reason)

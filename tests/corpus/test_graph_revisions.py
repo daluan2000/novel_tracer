@@ -6,6 +6,7 @@ import uuid
 from types import SimpleNamespace
 
 import pytest
+from pydantic import ValidationError
 from fastapi.testclient import TestClient
 
 from novel_agent.corpus.knowledge_graph.models import GraphError, MergeEntitiesRequest
@@ -144,6 +145,89 @@ def test_multi_step_restore_keeps_branches_and_controls_future_rebuilds(graph):
     assert revisions.restore("n", branch_build, second, IDENTITY)["graph_version"]
 
 
+def batch_body(version, entities, names=("甲", "乙", "丁"), canonical_name="人工确定的名称"):
+    return MergeEntitiesRequest(version=version, entity_ids=[entities[name]["id"] for name in names], canonical_name=canonical_name)
+
+
+def test_batch_merge_with_entered_name_is_one_reversible_revision(graph):
+    storage, revisions, original, entities = graph
+    before = snapshot(storage, original)
+    body = batch_body(original, entities, canonical_name="  人工确定的名称  ")
+    preview = revisions.merge("n", body, IDENTITY, preview=True)
+    assert [e["name"] for e in preview["entities"]] == ["甲", "乙", "丁"]
+    assert preview["target"]["name"] == "人工确定的名称"
+    assert preview["target"]["mention_count"] == 4
+    assert preview["relation_count_before"] == 5 and preview["relation_count_after"] == 3
+    assert storage.active("n") == original
+    merged = revisions.merge("n", body, IDENTITY)["graph_version"]
+    result = snapshot(storage, merged)
+    assert len(result["entities"]) == 3
+    target = next(e for e in result["entities"].values() if e["name"] == "人工确定的名称")
+    assert {"甲", "乙", "丁"} <= set(target["aliases"])
+    assert {b["entity_id"] for b in result["bindings"] if b["mention_id"] in {"0", "2", "10", "30"}} == {target["id"]}
+    assert len(revisions.corrections("n", merged)["items"]) == 1
+    assert revisions.history("n", IDENTITY)["total"] == 2
+    assert snapshot(storage, original) == before
+    restored = revisions.restore("n", merged, original, IDENTITY)["graph_version"]
+    assert snapshot(storage, restored) == before
+    assert revisions.corrections("n", restored)["items"] == []
+
+
+@pytest.mark.parametrize("variant,status", [(None, "applied"), ("satisfied", "applied"),
+    ("missing", "pending"), ("split", "pending"), ("outsider", "pending")])
+def test_batch_rebuild_replays_whole_group_or_keeps_whole_group_pending(graph, variant, status):
+    storage, revisions, original, entities = graph
+    revisions.merge("n", batch_body(original, entities), IDENTITY)
+    rebuilt, fresh = seed(storage, variant=variant, apply=True)
+    rules = revisions.corrections("n", rebuilt)["items"]
+    assert len(rules) == 1 and rules[0]["status"] == status
+    result = snapshot(storage, rebuilt)
+    if status == "applied":
+        combined = next(e for e in result["entities"].values() if e["name"] == "人工确定的名称")
+        assert len(combined["mentions"]) == 4
+        assert {"甲", "乙", "丁"} <= set(combined["aliases"])
+    else:
+        # A failure in any member must not partially merge the remaining members.
+        assert fresh["丁"]["id"] in result["entities"]
+        assert fresh["乙"]["id"] in result["entities"]
+        assert not any(e["name"] == "人工确定的名称" for e in result["entities"].values())
+
+
+@pytest.mark.parametrize("extra", [
+    {"entity_ids": ["a"]}, {"entity_ids": ["a", "a"]}, {"entity_ids": ["a", "b"], "canonical_name": "   "},
+    {"entity_ids": ["a", "b"], "canonical_name": "长" * 101}, {"entity_ids": ["a", ""], "canonical_name": "名"},
+    {"entity_ids": ["a", "b"], "source_id": "a"},
+])
+def test_batch_request_validation(extra):
+    with pytest.raises(ValidationError):
+        MergeEntitiesRequest.model_validate({"version": "v", "canonical_name": "新名称", **extra})
+
+
+def test_batch_rejects_invalid_members_without_publishing_or_applying_any_change(graph):
+    storage, revisions, original, entities = graph
+    before = snapshot(storage, original)
+    for body in (batch_body(original, entities, names=("甲", "乙", "剑")),
+                 MergeEntitiesRequest(version=original, entity_ids=[entities["甲"]["id"], entities["乙"]["id"], "missing"], canonical_name="新名")):
+        with pytest.raises(GraphError):
+            revisions.merge("n", body, IDENTITY)
+        assert snapshot(storage, original) == before
+        assert storage.active("n") == original and revisions.history("n", IDENTITY)["total"] == 1
+
+
+def test_existing_two_entity_rules_remain_replayable(graph):
+    storage, revisions, original, entities = graph
+    merged = revisions.merge("n", merge_body(original, entities), IDENTITY)["graph_version"]
+    rules = revisions.corrections("n", merged)["items"]
+    rules[0].pop("entity_ids")
+    rules[0].pop("entity_names")
+    rules[0]["source_entity_id"] = entities["甲"]["id"]
+    with storage.connect() as db:
+        db.execute("UPDATE graph_revisions SET corrections=? WHERE version=?", (encode(rules), merged))
+    rebuilt, _ = seed(storage, apply=True)
+    assert len(snapshot(storage, rebuilt)["entities"]) == 4
+    assert revisions.corrections("n", rebuilt)["items"][0]["status"] == "applied"
+
+
 @pytest.mark.parametrize("variant,status", [(None, "applied"), ("satisfied", "satisfied"),
     ("missing", "pending"), ("split", "pending"), ("outsider", "pending")])
 def test_rebuild_matches_source_mentions_and_exposes_conflicts(graph, variant, status):
@@ -241,7 +325,7 @@ def test_http_merge_rebuild_restore_restart_and_old_agent_snapshot(tmp_path, mon
         reader = client.app.state.knowledge_graph.capture(novel)
         left = reader.search("张三")["items"][0]["id"]
         right = reader.search("李四")["items"][0]["id"]
-        body = {"version": original, "source_id": left, "target_id": right}
+        body = {"version": original, "entity_ids": [left, right], "canonical_name": "人工合并人物"}
         assert client.post(base + "/merges/preview", json=body).status_code == 200
         calls = len(model.calls)
         merged = client.post(base + "/merges", json=body)

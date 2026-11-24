@@ -7,9 +7,8 @@ const props = defineProps<{ novelId: string; version: string; root: GraphNode | 
 const emit = defineEmits<{ changed: [] }>()
 const busy = ref(false), error = ref(''), success = ref('')
 const mergeOpen = ref(false), historyOpen = ref(false), correctionsOpen = ref(false)
-const first = ref<GraphNode | null>(null), second = ref<GraphNode | null>(null)
-const firstQuery = ref(''), secondQuery = ref(''), keep = ref('')
-const firstChoices = ref<GraphNode[]>([]), secondChoices = ref<GraphNode[]>([])
+const selected = ref<GraphNode[]>([]), query = ref(''), canonicalName = ref('')
+const choices = ref<GraphNode[]>([])
 const preview = ref<GraphMergePreview | null>(null), replacing = ref<string | undefined>()
 const history = ref<GraphRevision[]>([]), historyTotal = ref(0), restoreTarget = ref<GraphRevision | null>(null)
 const corrections = ref<GraphCorrection[]>([])
@@ -17,16 +16,35 @@ const blocked = computed(() => busy.value || props.running || !props.version)
 const operations = { build: '构建图谱', merge: '合并实体', restore: '恢复版本', correction: '跳过本次修正' }
 const types: Record<string, string> = { person: '人物', place: '地点', organization: '组织', item: '物品', skill: '功法', concept: '专有概念' }
 let epoch = 0, disposed = false
-const searchSequence = [0, 0]
+let searchSequence = 0
+let searchTimer: ReturnType<typeof setTimeout> | undefined
+let searchController: AbortController | undefined
+
+function cancelSearch() {
+  searchSequence++
+  if (searchTimer) clearTimeout(searchTimer)
+  searchTimer = undefined
+  searchController?.abort(); searchController = undefined
+}
+function scheduleSearch() {
+  cancelSearch(); choices.value = []
+  if (!query.value.trim() || !mergeOpen.value || blocked.value) return
+  searchTimer = setTimeout(() => { searchTimer = undefined; void search() }, 300)
+}
+watch(query, scheduleSearch, { flush: 'sync' })
+watch([mergeOpen, () => props.running], () => {
+  if (mergeOpen.value && !props.running) scheduleSearch()
+  else { cancelSearch(); choices.value = [] }
+}, { flush: 'sync' })
 
 watch(() => [props.novelId, props.version], (_, prior) => {
-  epoch++; searchSequence[0]!++; searchSequence[1]!++
+  epoch++; cancelSearch()
   busy.value = false; error.value = ''; mergeOpen.value = false; historyOpen.value = false; correctionsOpen.value = false
-  first.value = null; second.value = null; firstChoices.value = []; secondChoices.value = []; preview.value = null
+  selected.value = []; choices.value = []; query.value = ''; canonicalName.value = ''; preview.value = null
   history.value = []; historyTotal.value = 0; restoreTarget.value = null; corrections.value = []; replacing.value = undefined
   if (prior && prior[0] !== props.novelId) success.value = ''
 })
-onBeforeUnmount(() => { disposed = true; epoch++ })
+onBeforeUnmount(() => { disposed = true; epoch++; cancelSearch() })
 
 async function perform<T>(operation: () => Promise<T>, accept: (value: T) => void) {
   const current = epoch
@@ -47,46 +65,48 @@ function changed() {
   emit('changed')
 }
 function beginMerge(rule?: GraphCorrection) {
+  cancelSearch()
   mergeOpen.value = true; preview.value = null; replacing.value = rule?.id; error.value = ''; success.value = ''
-  first.value = rule ? null : props.root; second.value = null
-  firstQuery.value = rule?.source_name || props.root?.name || ''; secondQuery.value = rule?.target_name || ''
-  keep.value = first.value?.id || ''; firstChoices.value = []; secondChoices.value = []
+  selected.value = !rule && props.root ? [props.root] : []
+  query.value = rule?.entity_names?.[0] || rule?.source_name || ''
+  canonicalName.value = rule?.target_name || props.root?.name || ''; choices.value = []
+  scheduleSearch()
 }
-function editQuery(slot: 0 | 1) {
-  searchSequence[slot]!++; preview.value = null
-  if (slot === 0) { searchSequence[1]!++; first.value = null; firstChoices.value = []; second.value = null; secondChoices.value = []; keep.value = '' }
-  else { second.value = null; secondChoices.value = [] }
-}
-async function search(slot: 0 | 1) {
-  const query = (slot === 0 ? firstQuery.value : secondQuery.value).trim()
-  if (!query) return
-  const current = epoch, sequence = ++searchSequence[slot]!
+async function search() {
+  const text = query.value.trim()
+  if (!text || blocked.value) return
+  const current = epoch, sequence = ++searchSequence
+  const controller = new AbortController()
+  searchController = controller
   error.value = ''
   try {
-    const page = await graphApi.search(props.novelId, props.version, query,
-      slot === 1 && first.value ? { entityTypes: [first.value.type] } : {})
-    if (disposed || current !== epoch || searchSequence[slot] !== sequence) return
-    if (slot === 0) firstChoices.value = page.items
-    else secondChoices.value = page.items.filter(node => node.id !== first.value?.id)
+    const page = await graphApi.search(props.novelId, props.version, text,
+      selected.value[0] ? { entityTypes: [selected.value[0].type] } : {}, controller.signal)
+    if (disposed || current !== epoch || searchSequence !== sequence) return
+    choices.value = page.items.filter(node => !selected.value.some(item => item.id === node.id))
   } catch (reason) {
-    if (!disposed && current === epoch && searchSequence[slot] === sequence) {
+    if (!disposed && current === epoch && searchSequence === sequence) {
       error.value = reason instanceof Error ? reason.message : '搜索失败。'
       if (reason instanceof ApiError && reason.code === 'graph_version_changed') emit('changed')
     }
-  }
+  } finally { if (searchController === controller) searchController = undefined }
 }
-function choose(slot: 0 | 1, node: GraphNode) {
-  searchSequence[slot]!++; preview.value = null
-  if (slot === 0) {
-    searchSequence[1]!++
-    first.value = node; firstQuery.value = node.name; firstChoices.value = []; keep.value = node.id
-    second.value = null; secondChoices.value = []
-  } else { second.value = node; secondQuery.value = node.name; secondChoices.value = [] }
+function choose(node: GraphNode) {
+  if (blocked.value || selected.value.some(item => item.id === node.id)) return
+  if (selected.value[0] && selected.value[0].type !== node.type) return
+  cancelSearch(); preview.value = null
+  selected.value.push(node)
+  if (!canonicalName.value.trim()) canonicalName.value = node.name
+  choices.value = choices.value.filter(item => item.id !== node.id && item.type === node.type)
+}
+function remove(node: GraphNode) {
+  preview.value = null
+  selected.value = selected.value.filter(item => item.id !== node.id)
+  scheduleSearch()
 }
 const mergeBody = computed<GraphMergeRequest | null>(() => {
-  if (!first.value || !second.value || first.value.id === second.value.id || first.value.type !== second.value.type) return null
-  return { version: props.version, source_id: keep.value === first.value.id ? second.value.id : first.value.id,
-    target_id: keep.value === first.value.id ? first.value.id : second.value.id,
+  if (selected.value.length < 2 || !canonicalName.value.trim() || canonicalName.value.trim().length > 100) return null
+  return { version: props.version, entity_ids: selected.value.map(node => node.id), canonical_name: canonicalName.value.trim(),
     ...(replacing.value ? { replaces_correction_id: replacing.value } : {}) }
 })
 async function previewMerge() {
@@ -124,9 +144,10 @@ async function skip(rule: GraphCorrection) {
 }
 function summary(revision: GraphRevision) {
   if (revision.operation === 'merge') {
+    const entities = revision.details.entities as Array<{ name: string }> | undefined
     const source = revision.details.source as { name?: string } | undefined
     const target = revision.details.target as { name?: string } | undefined
-    return `${source?.name || '实体'} → ${target?.name || '保留实体'}`
+    return `${entities?.map(entity => entity.name).join('、') || source?.name || '实体'} → ${target?.name || '合并后实体'}`
   }
   return revision.operation === 'restore' ? `恢复自 ${revision.restored_from?.slice(0, 8)}` : ''
 }
@@ -144,20 +165,18 @@ function summary(revision: GraphRevision) {
     <p v-if="success" role="status">{{ success }}</p>
 
     <section v-if="mergeOpen" class="graph-merge-form" aria-label="合并实体表单">
-      <h3>{{ replacing ? '重新指定人工合并' : '合并两个实体' }}</h3>
+      <h3>{{ replacing ? '重新指定人工合并' : '合并多个实体' }}</h3>
       <p>合并作用于全书，不受当前章节筛选限制。名称、原文提及和关系将一起更新。</p>
-      <label class="field"><span>第一个实体</span><input v-model="firstQuery" :disabled="blocked" @input="editQuery(0)" @keydown.enter.prevent="search(0)" /></label>
-      <button type="button" class="text-button" :disabled="blocked || !firstQuery.trim()" @click="search(0)">搜索第一个实体</button>
-      <ul class="graph-candidates"><li v-for="node in firstChoices" :key="node.id"><button type="button" :disabled="blocked" @click="choose(0, node)">{{ node.name }} · {{ types[node.type] || node.type }} · {{ node.first_mention?.section_title || node.first_mention?.section_id }} {{ node.first_mention?.start_line ? `行 ${node.first_mention.start_line}` : '' }}</button></li></ul>
-      <p v-if="first">已选：{{ first.name }}（{{ types[first.type] || first.type }}） · {{ first.aliases.join('、') }}</p>
-      <label class="field"><span>第二个实体（同一类型）</span><input v-model="secondQuery" :disabled="blocked || !first" @input="editQuery(1)" @keydown.enter.prevent="search(1)" /></label>
-      <button type="button" class="text-button" :disabled="blocked || !first || !secondQuery.trim()" @click="search(1)">搜索第二个实体</button>
-      <ul class="graph-candidates"><li v-for="node in secondChoices" :key="node.id"><button type="button" :disabled="blocked" @click="choose(1, node)">{{ node.name }} · {{ node.first_mention?.section_title || node.first_mention?.section_id }} {{ node.first_mention?.start_line ? `行 ${node.first_mention.start_line}` : '' }} · {{ node.aliases.join('、') }}</button></li></ul>
-      <p v-if="second">已选：{{ second.name }} · {{ second.aliases.join('、') }}</p>
-      <label v-if="first && second" class="field"><span>保留的实体与规范名称</span><select v-model="keep" :disabled="blocked" @change="preview = null"><option :value="first.id">{{ first.name }}</option><option :value="second.id">{{ second.name }}</option></select></label>
+      <label class="field"><span>搜索要合并的实体</span><input v-model="query" :disabled="blocked" /></label>
+      <ul class="graph-candidates"><li v-for="node in choices" :key="node.id"><button type="button" :disabled="blocked" @click="choose(node)">添加 {{ node.name }} · {{ types[node.type] || node.type }} · {{ node.first_mention?.section_title || node.first_mention?.section_id }} {{ node.first_mention?.start_line ? `行 ${node.first_mention.start_line}` : '' }}<small v-if="node.aliases.length">其他名称：{{ node.aliases.join('、') }}</small></button></li></ul>
+      <p>已选 {{ selected.length }} 个实体，至少选择两个同类型实体，可继续搜索添加。</p>
+      <ul class="graph-merge-selected"><li v-for="node in selected" :key="node.id"><strong>{{ node.name }}</strong> · {{ types[node.type] || node.type }}<span v-if="node.aliases.length"> · {{ node.aliases.join('、') }}</span>
+        <button type="button" class="text-button" :disabled="blocked" @click="remove(node)">移除 {{ node.name }}</button>
+      </li></ul>
+      <label class="field"><span>合并后的实体名称</span><input v-model="canonicalName" maxlength="100" :disabled="blocked" placeholder="直接输入最终保留的名称" @input="preview = null" /></label>
       <button type="button" class="button" :disabled="blocked || !mergeBody" @click="previewMerge()">预览合并</button>
       <div v-if="preview" class="graph-merge-preview" role="status">
-        <p>{{ preview.source.name }}（{{ preview.source.mention_count }} 处）合入 {{ preview.target.name }}（原 {{ preview.target.mention_count_before }} 处），合并后 {{ preview.target.mention_count }} 处原文提及。</p>
+        <p>{{ preview.entities.map(entity => `${entity.name}（${entity.mention_count} 处）`).join('、') }} 合并为 {{ preview.target.name }}，共 {{ preview.target.mention_count }} 处原文提及。</p>
         <p>保留名称：{{ preview.target.name }}；其他名称：{{ preview.target.aliases.join('、') || '无' }}</p>
         <p>全图关系 {{ preview.relation_count_before }} → {{ preview.relation_count_after }} 条；移除 {{ preview.self_relations_removed }} 条自关联，原始事实记录保留。</p>
         <button type="button" class="button primary" :disabled="blocked" @click="merge()">确认合并并保存版本</button>

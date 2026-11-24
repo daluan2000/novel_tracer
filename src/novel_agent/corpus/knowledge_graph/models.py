@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -151,6 +151,27 @@ class RevisionRequest(StrictModel):
 
 
 class MergeEntitiesRequest(RevisionRequest):
-    source_id: str = Field(min_length=1, max_length=100)
-    target_id: str = Field(min_length=1, max_length=100)
+    entity_ids: list[Annotated[str, Field(min_length=1, max_length=100)]] | None = Field(default=None, min_length=2)
+    canonical_name: str | None = Field(default=None, min_length=1, max_length=100)
+    # Continue accepting previously shipped two-entity API clients.
+    source_id: str | None = Field(default=None, min_length=1, max_length=100)
+    target_id: str | None = Field(default=None, min_length=1, max_length=100)
     replaces_correction_id: str | None = Field(default=None, min_length=1, max_length=64)
+
+    @model_validator(mode="after")
+    def validate_merge(self):
+        if self.entity_ids is not None:
+            if self.source_id is not None or self.target_id is not None:
+                raise ValueError("entity_ids 不能与旧版 source_id/target_id 同时使用。")
+            if len(set(self.entity_ids)) != len(self.entity_ids):
+                raise ValueError("不能重复选择同一实体。")
+            if not self.canonical_name or not self.canonical_name.strip():
+                raise ValueError("请输入合并后的实体名称。")
+            self.canonical_name = self.canonical_name.strip()
+        elif self.source_id is None or self.target_id is None or self.canonical_name is not None:
+            raise ValueError("请提供 entity_ids 和 canonical_name。")
+        return self
+
+    @property
+    def merge_ids(self):
+        return self.entity_ids if self.entity_ids is not None else [self.source_id, self.target_id]

@@ -71,16 +71,17 @@ export interface GraphHistory {
   graph_version: string | null; items: GraphRevision[]; total: number; offset: number; limit: number
 }
 export interface GraphMergeRequest {
-  version: string; source_id: string; target_id: string; replaces_correction_id?: string
+  version: string; entity_ids: string[]; canonical_name: string; replaces_correction_id?: string
 }
 export interface GraphMergePreview {
   graph_version: string
-  source: { id: string; name: string; aliases: string[]; mention_count: number }
+  entities: Array<{ id: string; name: string; aliases: string[]; mention_count: number }>
   target: { id: string; name: string; aliases: string[]; mention_count: number; mention_count_before: number }
   relation_count_before: number; relation_count_after: number; self_relations_removed: number
 }
 export interface GraphCorrection {
   id: string; basis_version: string; source_name: string; target_name: string
+  entity_names?: string[]
   status: 'applied' | 'satisfied' | 'pending' | 'skipped'; reason: string | null
 }
 export interface GraphMutation { graph_version: string; operation: GraphRevisionOperation; details: Record<string, unknown> }
