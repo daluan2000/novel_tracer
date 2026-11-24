@@ -70,13 +70,16 @@ describe('SearchPanel', () => {
     expect(wrapper.text()).toContain('人物在这里。')
     expect(wrapper.text()).toContain('搜索范围：全书')
     expect(wrapper.text()).toContain('章节 1 · 第一章 起点')
+    await wrapper.findAll('button').find(item => item.text() === '检索状态与用量')!.trigger('click')
+    await flushPromises()
     expect(wrapper.text()).toContain('语义检索用量与运行状态')
     expect(wrapper.text()).toContain('embedding_not_configured')
 
-    await wrapper.find('.text-button').trigger('click')
+    await wrapper.find('.result-list .text-button').trigger('click')
     await flushPromises()
     expect(api.context).toHaveBeenCalledWith('book-1', 'chunk-1')
-    expect(wrapper.text()).toContain('人物在这里出现。')
+    expect(wrapper.get('.inspector-pane .source-reader').text()).toContain('人物在这里出现。')
+    expect(wrapper.find('.search-result .context-block').exists()).toBe(false)
   })
 
   it('searches within a selected inclusive chapter range', async () => {
@@ -104,12 +107,27 @@ describe('SearchPanel', () => {
     await inputs[1].setValue('章节 1 · 第一章 起点')
 
     expect(wrapper.text()).toContain('起始章节不能晚于结束章节。')
-    expect(wrapper.find('.search-primary-row button').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('.search-primary-row .primary').attributes('disabled')).toBeDefined()
 
     await wrapper.setProps({ novel: { ...novel, novel_id: 'book-2' } })
     await flushPromises()
     const changedInputs = wrapper.findAll('.chapter-range input')
     expect((changedInputs[0].element as HTMLInputElement).value).toBe('')
     expect((changedInputs[1].element as HTMLInputElement).value).toBe('')
+  })
+
+  it('does not put old book search results into the new book', async () => {
+    let finish!: (hits: Awaited<ReturnType<typeof api.search>>) => void
+    vi.mocked(api.search).mockReturnValueOnce(new Promise(resolve => { finish = resolve }))
+    const wrapper = mount(SearchPanel, { props: { novel } })
+    await flushPromises()
+    await wrapper.find('input').setValue('旧书人物')
+    await wrapper.find('form').trigger('submit')
+    await wrapper.setProps({ novel: { ...novel, novel_id: 'new-book' } })
+    finish([{ chunk_id: 'old', section_id: 'old', section_title: null, start_line: 1, end_line: 2, snippet: '过时的原文', score: 1, matched_terms: [] }])
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('过时的原文')
+    expect(wrapper.find('.search-result').exists()).toBe(false)
+    wrapper.unmount()
   })
 })

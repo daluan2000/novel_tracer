@@ -326,9 +326,9 @@ def test_results_diversify_sections_before_backfilling(tmp_path) -> None:
     assert len({hit.section_id for hit in hits}) == 2
 
 
-def test_fixed_retrieval_evaluation_recall_at_five(novel_document, tmp_path) -> None:
+def test_fixed_retrieval_evaluation_recall_at_five(novel_document, tmp_path, local_fixture_path) -> None:
+    cases_path = local_fixture_path("retrieval_eval.json")
     service, _provider = _build_hybrid(novel_document, tmp_path)
-    cases_path = Path(__file__).parents[1] / "fixtures" / "retrieval_eval.json"
     cases = json.loads(cases_path.read_text(encoding="utf-8"))["cases"]
 
     successful = 0

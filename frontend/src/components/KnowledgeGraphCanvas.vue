@@ -176,7 +176,7 @@ onMounted(async () => {
       })
       observer.observe(host.value)
     }
-  } catch { error.value = '关系图加载失败，请使用下方结果列表。' }
+  } catch { error.value = '关系图加载失败，请使用关系检查器中的列表。' }
 })
 watch(() => [props.result, props.resetKey, props.rootId, props.labels, props.symmetric], () => update())
 watch(() => props.selectedEdgeId, selectEdge)
@@ -197,7 +197,7 @@ onBeforeUnmount(() => { disposed = true; observer?.disconnect(); cy?.destroy() }
       </div>
     </div>
     <p v-if="error" class="graph-canvas-error" role="alert">{{ error }}</p>
-    <div ref="host" class="graph-canvas" aria-label="实体关系图；Ctrl 加滚轮缩放，完整内容亦可在下方列表中查看" @wheel.capture="handleWheel"></div>
+    <div ref="host" class="graph-canvas" aria-label="实体关系图；Ctrl 加滚轮缩放，完整内容亦可在关系检查器中查看" @wheel.capture="handleWheel"></div>
     <div class="graph-canvas-footer">
       <div class="graph-legend"><span v-for="type in legend" :key="type.label"><i :style="{ background: type.color }"></i>{{ type.label }}</span><span v-if="rootId" class="graph-root-hint">光晕标记查询实体</span></div>
       <div class="graph-zoom-controls">

@@ -28,6 +28,27 @@ beforeEach(() => {
 })
 
 describe('KnowledgeGraphPanel', () => {
+  it('keeps a pending mention context separate from the exploration evidence when changing tasks', async () => {
+    vi.mocked(graphApi.unresolved).mockResolvedValue({ ...result, items: [{ mention_id: 'm1', surface: '未确认称呼', type: 'person', anchor: span, contexts: [], candidates: [], reason: 'competing_identities' }], total: 1, offset: 0, limit: 20 })
+    const wrapper = mount(KnowledgeGraphPanel, { props: { novel }, global: { stubs: { KnowledgeGraphCanvas: true } } })
+    await flushPromises()
+    await wrapper.find('.graph-entity-search input').setValue('甲')
+    await wrapper.findAll('select')[1]!.setValue('person')
+    await flushPromises()
+    await wrapper.find('.graph-candidates button').trigger('click')
+    await flushPromises()
+    await wrapper.setProps({ section: 'entities' })
+    await wrapper.find('.graph-unresolved button').trigger('click')
+    await flushPromises()
+    let finish!: (chunks: Awaited<ReturnType<typeof api.context>>) => void
+    vi.mocked(api.context).mockReturnValueOnce(new Promise(resolve => { finish = resolve }))
+    await wrapper.findAll('.graph-unresolved button')[1]!.trigger('click')
+    await wrapper.setProps({ section: 'explore' })
+    finish([{ chunk_id: 'c1', section_id: 's1', section_title: '第一章', start_line: 1, end_line: 1, text: '待确认提及专用上下文' }])
+    await flushPromises()
+    expect(wrapper.find('.graph-evidence .context-block').exists()).toBe(false)
+    wrapper.unmount()
+  })
   it('loads pending mentions as source records and discards them when changing books', async () => {
     vi.mocked(graphApi.unresolved).mockResolvedValue({ ...result, items: [{ mention_id: 'm1', surface: '宝玉',
       type: 'person', anchor: span, contexts: [{ ...span, quote: '甄家的太太带了他们家的宝玉来了。' }],
@@ -66,6 +87,8 @@ describe('KnowledgeGraphPanel', () => {
     })
     const wrapper = mount(KnowledgeGraphPanel, { props: { novel }, global: { stubs: { KnowledgeGraphCanvas: true } } })
     await flushPromises()
+    await wrapper.setProps({ section: 'build' })
+    await wrapper.findAll('button').find(item => item.text() === '构建说明与参数')!.trigger('click')
     expect(wrapper.text()).toContain('抽取最多 4 路并发')
     expect(wrapper.text()).toContain('阶段累计耗时：')
     expect(wrapper.text()).toContain('3.2 秒')
@@ -157,6 +180,8 @@ describe('KnowledgeGraphPanel', () => {
     vi.mocked(graphApi.build).mockResolvedValue(job)
     const wrapper = mount(KnowledgeGraphPanel, { props: { novel }, global: { stubs: { KnowledgeGraphCanvas: true } } })
     await flushPromises()
+    await wrapper.setProps({ section: 'build' })
+    await wrapper.findAll('button').find(item => item.text() === '构建说明与参数')!.trigger('click')
     expect(wrapper.text()).toContain('6144 token')
     expect(wrapper.text()).toContain('已完成批次已保存')
     expect(wrapper.text()).toContain('可能已产生消耗')

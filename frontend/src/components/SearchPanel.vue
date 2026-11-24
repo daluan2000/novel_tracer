@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { api } from '../api'
 import type { NovelChunk, NovelInfo, SearchHit, SectionItem } from '../types'
 import RetrievalObservability from './RetrievalObservability.vue'
+import InspectorPane from './InspectorPane.vue'
+import PanelDrawer from './PanelDrawer.vue'
 
-const props = defineProps<{ novel: NovelInfo; retrievalRevision?: number }>()
+const props = withDefaults(defineProps<{ novel: NovelInfo; retrievalRevision?: number; active?: boolean }>(), { active: true })
 const query = ref('')
 const topK = ref(5)
 const results = ref<SearchHit[]>([])
@@ -19,6 +21,12 @@ const chaptersError = ref('')
 const startChapterValue = ref('')
 const endChapterValue = ref('')
 const hasSearched = ref(false)
+const filtersOpen = ref(false)
+const statusOpen = ref(false)
+const contextBusy = ref(false)
+const contextError = ref('')
+let contextGeneration = 0, searchGeneration = 0
+const activeHit = computed(() => results.value.find(hit => hit.chunk_id === openChunk.value))
 const submittedRange = ref<{ start: string; end: string } | null>(null)
 let chapterLoadGeneration = 0
 
@@ -50,9 +58,11 @@ function chapterDisplay(sectionId: string, fallback: string | null) {
 
 watch(() => props.novel.novel_id, async (novelId) => {
   const generation = ++chapterLoadGeneration
+  searchGeneration++; loading.value = false; error.value = ''; statusOpen.value = false; filtersOpen.value = false
   results.value = []
   contexts.value = {}
   openChunk.value = null
+  contextGeneration++; contextBusy.value = false; contextError.value = ''
   startChapterValue.value = ''
   endChapterValue.value = ''
   hasSearched.value = false
@@ -65,6 +75,7 @@ watch(() => props.novel.novel_id, async (novelId) => {
     let offset = 0
     while (true) {
       const page = await api.sections(novelId, offset, 200)
+      if (generation !== chapterLoadGeneration) return
       loaded.push(...page.items)
       offset += page.items.length
       if (!page.items.length || offset >= page.total) break
@@ -88,52 +99,54 @@ async function search() {
     error.value = rangeError.value
     return
   }
+  const generation = ++searchGeneration
+  const range = { start: startChapter.value?.label || '', end: endChapter.value?.label || '' }
   loading.value = true
   error.value = ''
+  openChunk.value = null; contextGeneration++; contextBusy.value = false
   try {
-    results.value = await api.search(props.novel.novel_id, query.value.trim(), topK.value, {
+    const hits = await api.search(props.novel.novel_id, query.value.trim(), topK.value, {
       startChapterId: startChapter.value?.id,
       endChapterId: endChapter.value?.id,
     })
+    if (generation !== searchGeneration) return
+    results.value = hits
     hasSearched.value = true
-    submittedRange.value = {
-      start: startChapter.value?.label || '',
-      end: endChapter.value?.label || '',
-    }
+    submittedRange.value = range
   } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : '搜索失败。'
+    if (generation === searchGeneration) error.value = cause instanceof Error ? cause.message : '搜索失败。'
   } finally {
-    loading.value = false
-    await retrievalObservability.value?.refresh()
+    if (generation === searchGeneration) { loading.value = false; await retrievalObservability.value?.refresh() }
   }
 }
 
 async function toggleContext(hit: SearchHit) {
-  if (openChunk.value === hit.chunk_id) {
-    openChunk.value = null
-    return
-  }
-  openChunk.value = hit.chunk_id
-  if (!contexts.value[hit.chunk_id]) {
-    try {
-      contexts.value[hit.chunk_id] = await api.context(props.novel.novel_id, hit.chunk_id)
-    } catch (cause) {
-      error.value = cause instanceof Error ? cause.message : '上下文加载失败。'
-    }
-  }
+  if (openChunk.value === hit.chunk_id) { closeContext(); return }
+  const generation = ++contextGeneration, novelId = props.novel.novel_id
+  openChunk.value = hit.chunk_id; contextError.value = ''; contextBusy.value = false
+  if (contexts.value[hit.chunk_id]) return
+  contextBusy.value = true
+  try {
+    const chunks = await api.context(novelId, hit.chunk_id)
+    if (generation === contextGeneration) contexts.value[hit.chunk_id] = chunks
+  } catch (cause) {
+    if (generation === contextGeneration) contextError.value = cause instanceof Error ? cause.message : '上下文加载失败。'
+  } finally { if (generation === contextGeneration) contextBusy.value = false }
 }
+onBeforeUnmount(() => { contextGeneration++; searchGeneration++; chapterLoadGeneration++ })
+function closeContext() { openChunk.value = null; contextGeneration++; contextBusy.value = false }
 </script>
 
 <template>
-  <section class="workspace-panel">
-    <div class="section-heading"><div><p class="eyebrow">混合检索</p><h2>查找原文</h2></div><span>支持限定章节范围</span></div>
+  <section class="workspace-panel search-panel">
     <form class="search-form" @submit.prevent="search">
       <div class="search-primary-row">
         <label class="field grow"><span>关键词（多个词用空格分隔）</span><input v-model="query" placeholder="例如：吕树 吕小鱼" /></label>
         <label class="field compact"><span>结果数</span><select v-model="topK"><option v-for="n in [3, 5, 10, 20]" :key="n" :value="n">{{ n }}</option></select></label>
+        <button type="button" class="button secondary filter-toggle" :aria-expanded="filtersOpen" @click="filtersOpen = !filtersOpen">章节范围</button>
         <button class="button primary" :disabled="loading || chaptersLoading || !!rangeError">{{ loading ? '检索中…' : '开始检索' }}</button>
       </div>
-      <div class="chapter-range">
+      <div v-show="filtersOpen" class="chapter-range">
         <label class="field">
           <span>从哪一章开始</span>
           <input v-model="startChapterValue" list="search-start-chapters" :disabled="chaptersLoading" :aria-invalid="!!rangeError" placeholder="全书开头" autocomplete="off" />
@@ -149,10 +162,12 @@ async function toggleContext(hit: SearchHit) {
       <p v-if="rangeError" class="field-error" role="alert">{{ rangeError }}</p>
       <p v-else-if="chaptersError" class="field-error" role="alert">{{ chaptersError }}</p>
     </form>
+    <div class="search-body">
+      <div class="search-results-scroll">
     <div v-if="error" class="inline-anomaly level-error" role="alert"><strong>原文检索失败</strong><p>{{ error }}</p></div>
     <div v-if="hasSearched" class="search-summary"><span>{{ rangeSummary }}</span><strong>{{ results.length }} 条结果</strong></div>
     <div v-if="results.length" class="result-list">
-      <article v-for="hit in results" :key="hit.chunk_id" class="search-result">
+      <article v-for="hit in results" :key="hit.chunk_id" class="search-result" :class="{ selected: openChunk === hit.chunk_id }">
         <div class="result-meta">
           <span>{{ chapterDisplay(hit.section_id, hit.section_title) }}</span>
           <span>行 {{ hit.start_line }}–{{ hit.end_line }}</span>
@@ -163,14 +178,16 @@ async function toggleContext(hit: SearchHit) {
           <div class="tags"><span v-for="term in hit.matched_terms" :key="term">{{ term }}</span></div>
           <button class="text-button" @click="toggleContext(hit)">{{ openChunk === hit.chunk_id ? '收起上下文' : '查看上下文' }}</button>
         </div>
-        <div v-if="openChunk === hit.chunk_id" class="context-block">
-          <p v-for="chunk in contexts[hit.chunk_id]" :key="chunk.chunk_id" :class="{ focused: chunk.chunk_id === hit.chunk_id }">
-            <span>行 {{ chunk.start_line }}–{{ chunk.end_line }}</span>{{ chunk.text }}
-          </p>
-        </div>
       </article>
     </div>
     <div v-else-if="!loading" class="empty-state"><span>⌕</span><p>{{ hasSearched ? '当前章节范围内未找到相关原文。' : '输入人物、地点或事件，查找小说中的相关原文。' }}</p></div>
-    <details class="search-status-details"><summary>检索状态与用量</summary><RetrievalObservability ref="retrievalObservability" :novel-id="novel.novel_id" :refresh-key="retrievalRevision" /></details>
+      </div>
+      <InspectorPane :open="active && !!openChunk" title="原文阅读" @close="closeContext">
+        <template v-if="activeHit"><div class="source-location"><strong>{{ chapterDisplay(activeHit.section_id, activeHit.section_title) }}</strong><span>行 {{ activeHit.start_line }}–{{ activeHit.end_line }}</span></div><p v-if="contextBusy" role="status">正在读取原文…</p><p v-if="contextError" class="field-error" role="alert">{{ contextError }}</p><div class="context-block source-reader"><p v-for="chunk in contexts[activeHit.chunk_id]" :key="chunk.chunk_id" :class="{ focused: chunk.chunk_id === activeHit.chunk_id }"><span>行 {{ chunk.start_line }}–{{ chunk.end_line }}</span>{{ chunk.text }}</p></div></template>
+        <div v-else class="inspector-empty"><span>原文就在这里</span><p>选择一条检索结果，在这里阅读相邻段落，核对人物与情节。</p></div>
+      </InspectorPane>
+    </div>
+    <div class="search-bottom-bar"><span>{{ hasSearched ? `${results.length} 条命中` : '支持人物、地点及事件关键词' }}</span><button class="text-button" @click="statusOpen = true">检索状态与用量</button></div>
+    <PanelDrawer :open="active && statusOpen" title="检索状态与用量" @close="statusOpen = false"><RetrievalObservability ref="retrievalObservability" :novel-id="novel.novel_id" :refresh-key="retrievalRevision" /></PanelDrawer>
   </section>
 </template>

@@ -1,13 +1,16 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref, watch } from 'vue'
 import { api } from '../api'
+import PanelDrawer from './PanelDrawer.vue'
+import WorkspaceToolbar from './WorkspaceToolbar.vue'
 import type { NovelInfo, SectionPage } from '../types'
 
-const props = defineProps<{ novel: NovelInfo }>()
+const props = withDefaults(defineProps<{ novel: NovelInfo; active?: boolean }>(), { active: true })
 const page = ref<SectionPage | null>(null)
 const loading = ref(false)
 const error = ref('')
 const pageSize = 20
+const diagnosticsOpen = ref(false)
 let loadGeneration = 0
 const strategyNames: Record<string, string> = {
   detected_headings: '按章节标题划分',
@@ -40,8 +43,8 @@ onBeforeUnmount(() => { loadGeneration++ })
 
 <template>
   <section class="workspace-panel structure-panel">
-    <details class="stats-details">
-      <summary>章节识别详情 · {{ novel.section_count }} 个章节，{{ novel.chunk_count }} 个文本片段</summary>
+    <WorkspaceToolbar label="全书" :count="`${page?.total ?? novel.section_count} 个章节`"><template #summary><span class="toolbar-hint">{{ novel.chunk_count }} 个文本片段</span></template><button class="button secondary" @click="diagnosticsOpen = true">章节识别详情</button></WorkspaceToolbar>
+    <PanelDrawer :open="active && diagnosticsOpen" title="章节识别详情" @close="diagnosticsOpen = false">
       <div class="stats-grid">
         <div>
           <span>章节划分方式</span><strong>{{ strategyNames[novel.structure.strategy] || novel.structure.strategy }}</strong>
@@ -60,17 +63,10 @@ onBeforeUnmount(() => { loadGeneration++ })
         </ul>
       </div>
 
-    </details>
-    <div class="section-heading">
-      <div>
-        <p class="eyebrow">全书目录</p>
-        <h2>章节目录</h2>
-      </div>
-      <span v-if="page">{{ page.total }} 个章节</span>
-    </div>
+    </PanelDrawer>
     <p v-if="error" class="form-error" role="alert">{{ error }}</p>
-    <div class="table-wrap" :aria-busy="loading">
-      <table>
+    <div class="table-wrap directory-table" :aria-busy="loading">
+      <table aria-label="全书章节"><colgroup><col class="chapter-title-col" /><col /><col /><col /></colgroup>
         <thead>
           <tr>
             <th>章节</th>
@@ -81,7 +77,7 @@ onBeforeUnmount(() => { loadGeneration++ })
         </thead>
         <tbody>
           <tr v-for="section in page?.items" :key="section.section_id">
-            <td><strong>{{ section.title || '未命名段落' }}</strong><small>{{ section.section_id }}</small></td>
+            <td><strong>{{ section.title || '未命名段落' }}</strong></td>
             <td>行 {{ section.start_line }}–{{ section.end_line }}</td>
             <td>{{ section.chunk_count }}</td>
             <td>{{ Math.round(section.confidence * 100) }}%</td>
@@ -89,7 +85,7 @@ onBeforeUnmount(() => { loadGeneration++ })
         </tbody>
       </table>
     </div>
-    <div v-if="page && page.total > page.limit" class="pagination">
+    <div v-if="page" class="pagination"><span class="pagination-caption">{{ page.total }} 个章节 · 每页 {{ pageSize }} 条</span>
       <button class="button secondary" :disabled="page.offset === 0 || loading"
         @click="load(Math.max(0, page.offset - page.limit))">上一页</button>
       <span>{{ page.offset + 1 }}–{{ Math.min(page.offset + page.limit, page.total) }} / {{ page.total }}</span>

@@ -6,8 +6,15 @@ import type { GraphContext, GraphEdge, GraphFilters, GraphGroup, GraphNode, Grap
 import { useKnowledgeGraph } from '../composables/useKnowledgeGraph'
 import KnowledgeGraphCanvas from './KnowledgeGraphCanvas.vue'
 import GraphEdits from './GraphEdits.vue'
+import GraphBuildPage from './GraphBuildPage.vue'
+import InspectorPane from './InspectorPane.vue'
+import PanelDrawer from './PanelDrawer.vue'
+import type { GraphSection } from '../navigation'
 
-const props = defineProps<{ novel: NovelInfo }>()
+const props = withDefaults(defineProps<{ novel: NovelInfo; section?: GraphSection; active?: boolean }>(), { active: true, section: 'explore' })
+const emit = defineEmits<{ navigate: [section: GraphSection] }>()
+const queryOpen = ref(false), inspectorOpen = ref(false), mentionOpen = ref(false)
+const inspectorTab = ref('relations')
 const novelId = computed(() => props.novel.novel_id)
 const graph = useKnowledgeGraph(toRef(() => props.novel.novel_id))
 const { status, error, busy, loading, running, root, target, candidates, targetCandidates, result } = graph
@@ -18,63 +25,10 @@ const chapterError = ref('')
 const selectedEdge = ref<GraphEdge | null>(null)
 const groups = ref<GraphGroup[]>([]), evidenceTotal = ref(0), evidenceBusy = ref(false)
 const context = ref<GraphContext | null>(null)
+const mentionContext = ref<GraphContext | null>(null)
 const typeLabels: Record<string, string> = { person: '人物', place: '地点', organization: '组织', item: '物品', skill: '功法', concept: '专有概念' }
 const nameFormLabels: Record<string, string> = { full_name: '全名', given_name: '名', address: '称呼', alias: '别名', proper_name: '专名' }
-const phases = { extracting: '收集原文提及与事实候选', resolving: '核对人物与事物的身份', cataloging: '建立全书身份目录', linking: '绑定具体提及', auditing: '复核身份与规范名称', materializing: '保存图谱', publishing: '发布版本' }
-const states = { queued: '等待构建', building: '构建中', stopping: '等待当前请求结束', completed: '已完成', failed: '构建失败', stopped: '已停止' }
-const buildErrors: Record<string, string> = {
-  graph_structured_output_failed: '模型连续返回不符合结构要求的结果，格式重试次数已用尽。已保存完成的批次，点击“继续构建”可重试当前片段。',
-  graph_model_timeout: '当前片段的模型请求超时。已完成批次已保存，点击“继续构建”可复用结果，并自动缩小较大的失败片段。',
-  graph_model_output_limit: '当前片段的模型输出未完整返回。已保存完成的批次；继续构建会使用片段编号精简抽取，并自动缩小较大的片段。',
-  graph_model_authentication_failed: '模型服务鉴权失败，请检查 API Key 后继续构建。',
-  graph_model_rate_limited: '模型服务请求受限，请稍后继续构建。',
-  graph_model_connection_failed: '无法连接模型服务，请检查网络及服务地址后继续。',
-  service_interrupted: '服务已重启，已保存完成的批次，点击“继续构建”可恢复。',
-  graph_build_failed: '构建处理发生异常，已保存完成的批次。请查看构建诊断及后端日志后继续。',
-  graph_extraction_processing_failed: '抽取结果处理失败，模型成功返回的候选已缓存。修复后继续构建可复用缓存。',
-  graph_checkpoint_invalid: '已缓存的片段与当前原文或数据格式不匹配，请检查图谱数据。',
-}
-const eventLabels: Record<string, string> = {
-  entity_same_name_reused: '同名唯一候选缺少异人依据，已复用现有实体',
-  graph_structured_output_failed: '模型结构化结果重试耗尽，构建已停止',
-  structured_output_failed: '模型结果仍未通过结构校验',
-  graph_model_timeout_retry: '模型请求超时，正在有限重试',
-  graph_model_rate_limit_retry: '模型请求受到限流，正在等待后重试',
-  graph_extraction_timeout_split: '超时片段已拆为较小片段',
-  graph_extraction_output_split: '模型输出达到上限，已自动缩小片段',
-  graph_extraction_compact_fallback: '已切换为精简抽取，使用片段编号引用原文',
-  graph_extraction_capacity_split: '实体或关系较密集，已自动拆分片段',
-  graph_extraction_capacity_saved: '最小片段实体或关系较密集，已保存所有通过校验的候选',
-  graph_build_failed: '构建处理发生异常，请查看后端日志',
-  graph_model_output_limit: '模型响应达到输出上限，未形成完整结果',
-  graph_model_timeout: '模型请求超时',
-  structured_output_retry: '模型返回格式不完整，正在重试',
-  entity_identity_ambiguous: '身份依据不足，已保留为独立实体',
-  entity_identity_evidence_rejected: '身份线索缺少明确同一身份依据，已拒绝合并',
-  entity_identity_conflict_rejected: '身份线索与已明确区分的人物冲突，已拒绝合并',
-  graph_resolution_batch_split: '消歧批次超时或输出达到上限，已拆小并保存进度',
-  catalog_proposal_rejected: '身份目录提议缺少原文依据或存在身份冲突，相关提及保留待确认',
-}
-const quality = computed(() => status.value?.job?.quality_stats)
-const filterLabels: Record<string, string> = {
-  generic_name: '泛化称谓', low_frequency_background: '低频背景实体', identity_evidence: '缺少明确身份依据的线索',
-  low_frequency_after_resolution: '归并后仍低频的背景实体',
-}
-const pendingReasonLabels: Record<string, string> = {
-  competing_identities: '存在多个身份候选', insufficient_identity_evidence: '身份依据不足',
-  context_conflict: '上下文中的所属指代与身份存在冲突，等待进一步确认',
-}
-function eventLabel(code: string) {
-  if (eventLabels[code]) return eventLabels[code]
-  const failure = /^graph_processing_failure:(.+):([A-Za-z_][A-Za-z0-9_]*)$/.exec(code)
-  if (failure) return `片段 ${failure[1]} 处理失败（${failure[2]}），候选结果已缓存`
-  const rejected = /^(rejected_entities|rejected_relations|rejected_identity_links):(\d+)$/.exec(code)
-  if (rejected) {
-    const kinds: Record<string, string> = { rejected_entities: '实体', rejected_relations: '关系', rejected_identity_links: '身份线索' }
-    return `过滤了 ${rejected[2]} 个未通过校验的${kinds[rejected[1]!]}`
-  }
-  return code
-}
+const pendingReasonLabels: Record<string, string> = { competing_identities: '存在多个身份候选', insufficient_identity_evidence: '身份依据不足', context_conflict: '上下文中的所属指代与身份存在冲突，等待进一步确认' }
 const labels = computed(() => Object.fromEntries(status.value?.ontology.relation_types.map(r => [r.type, r.label]) || []))
 const symmetric = computed(() => status.value?.ontology.relation_types.filter(r => r.symmetric).map(r => r.type) || [])
 const rangeError = computed(() => start.value && end.value && chapters.value.findIndex(c => c.chapter_id === start.value) > chapters.value.findIndex(c => c.chapter_id === end.value) ? '起始章节不能晚于结束章节。' : '')
@@ -111,6 +65,7 @@ async function loadUnresolved() {
 
 watch(novelId, async id => {
   const sequence = ++chapterSequence
+  queryOpen.value = false; inspectorOpen.value = false; mentionOpen.value = false
   queryText.value = ''; targetText.value = ''; start.value = ''; end.value = ''
   entityType.value = ''; relationType.value = ''; chapters.value = []; chapterError.value = ''
   try {
@@ -145,8 +100,8 @@ watch([mode, depth, filters], () => {
     void submit()
   } else result.value = null
 })
-watch(() => result.value, () => { selectedEdge.value = null; groups.value = []; context.value = null; evidenceBusy.value = false; evidenceSequence++ })
-watch(() => status.value?.active_version, () => { selectedEdge.value = null; groups.value = []; context.value = null; evidenceSequence++ })
+watch(() => result.value, () => { inspectorOpen.value = false; inspectorTab.value = 'relations'; selectedEdge.value = null; groups.value = []; context.value = null; evidenceBusy.value = false; evidenceSequence++ })
+watch(() => status.value?.active_version, () => { selectedEdge.value = null; groups.value = []; context.value = null; mentionContext.value = null; mentionOpen.value = false; evidenceSequence++ })
 async function submit() {
   if (!rangeError.value && !chapterError.value) await graph.query(depth.value, filters.value, mode.value)
 }
@@ -165,6 +120,7 @@ function clearEdgeSelection() {
 async function selectEdge(edge: GraphEdge) {
   evidenceSequence++
   evidenceBusy.value = false
+  inspectorOpen.value = true; inspectorTab.value = 'evidence'
   selectedEdge.value = edge; context.value = null; groups.value = edge.evidence_groups; evidenceTotal.value = edge.evidence_total
 }
 async function moreEvidence() {
@@ -184,10 +140,14 @@ async function moreEvidence() {
 }
 async function readContext(span: GraphSpan) {
   const sequence = ++evidenceSequence, id = novelId.value
+  const fromMention = props.section === 'entities'
   evidenceBusy.value = false
   try {
     const chunks = await api.context(id, span.chunk_id)
-    if (sequence === evidenceSequence && !disposed) context.value = { span, chunks }
+    if (sequence === evidenceSequence && !disposed) {
+      if (fromMention) { mentionContext.value = { span, chunks }; mentionOpen.value = true }
+      else context.value = { span, chunks }
+    }
   } catch { if (sequence === evidenceSequence && !disposed) error.value = '上下文读取失败。' }
 }
 const name = (id: string) => result.value?.nodes.find(n => n.id === id)?.name || id
@@ -195,61 +155,12 @@ onBeforeUnmount(() => { disposed = true; chapterSequence++; evidenceSequence++; 
 </script>
 
 <template>
-  <section class="workspace-panel knowledge-graph">
-    <div class="section-heading"><div><p class="eyebrow">知识图谱</p><h2>探索实体与关系</h2></div><span>自动抽取 · 原文可追溯</span></div>
+  <section class="workspace-panel knowledge-graph" :class="`graph-section-${section}`">
     <p v-if="error" class="global-error" role="alert">{{ error }}</p>
-    <details v-if="status" class="graph-status" :open="!status.available || running || status.job?.status === 'failed'">
-      <summary class="graph-summary"><strong>{{ status.available ? '图谱已就绪' : '准备构建图谱' }}</strong><span v-if="status.counts">{{ status.counts.entity_count }} 个实体 · {{ status.counts.relation_count }} 条关系</span><small>构建与管理</small></summary>
-      <div class="graph-management">
-      <div class="graph-status-heading"><strong>{{ status.available ? '图谱可用' : '尚无可用图谱' }}</strong><small v-if="status.active_version">版本 {{ status.active_version.slice(0, 8) }}</small></div>
-      <p>{{ status.model_name || '聊天模型未配置' }} · {{ status.source_characters.toLocaleString() }} 字 · 预计 {{ status.estimated_extraction_units }} 个抽取批次</p>
-      <details class="graph-build-options"><summary>构建说明与参数</summary>
-      <p v-if="status.max_output_tokens" class="graph-notice">单次输出最多 {{ status.max_output_tokens }} token · 请求超时上限 {{ status.request_timeout_seconds }} 秒。较大片段超时或输出达到上限时自动拆分；其他超时最多额外重试 {{ status.timeout_retries }} 次。</p>
-      <p v-if="status.extraction_concurrency" class="graph-notice">抽取最多 {{ status.extraction_concurrency }} 路并发 · 消歧最多 {{ status.resolution_concurrency }} 路并发；限流后最多额外重试 {{ status.rate_limit_retries }} 次。</p>
-      <p class="graph-notice">点击构建或重建会将全书正文分批发送给已配置的聊天模型，并产生模型用量。重建期间原图谱仍可使用。</p>
-      </details>
-      <p v-if="status.error_code" role="alert">图谱暂不可用（{{ status.error_code }}），仍可使用文本检索。</p>
-      <p v-if="status.counts">当前图谱：{{ status.counts.entity_count }} 个实体 · {{ status.counts.relation_count }} 条关系</p>
-      <details v-if="status.job" class="graph-job-details" :open="running || status.job.status === 'failed'"><summary>构建进度与用量 · {{ states[status.job.status] }}</summary>
-      <div class="graph-progress" aria-live="polite">
-        <strong>{{ states[status.job.status] }} · {{ phases[status.job.phase] }}</strong>
-        <span>抽取 {{ status.job.extraction.completed }}/{{ status.job.extraction.total }} · 消歧 {{ status.job.resolution.completed }}/{{ status.job.resolution.total }} · {{ status.job.elapsed_seconds.toFixed(1) }} 秒</span>
-        <small v-if="status.job.catalog">目录 {{ status.job.catalog.completed }}/{{ status.job.catalog.total }} · 绑定 {{ status.job.binding?.completed }}/{{ status.job.binding?.total }} · 复核 {{ status.job.audit?.completed }}/{{ status.job.audit?.total }}</small>
-        <small v-if="status.job.phase_elapsed_seconds && Object.keys(status.job.phase_elapsed_seconds).length">阶段累计耗时：<template v-for="(seconds, phase) in status.job.phase_elapsed_seconds" :key="phase">{{ phases[phase] }} {{ seconds?.toFixed(1) }} 秒；</template></small>
-        <small v-else>历史阶段耗时未知。</small>
-        <small v-if="status.job.phase_model_seconds && Object.keys(status.job.phase_model_seconds).length">模型请求累计耗时：<template v-for="(seconds, phase) in status.job.phase_model_seconds" :key="phase">{{ phases[phase] }} {{ seconds?.toFixed(1) }} 秒；</template>并发时可大于实际耗时。</small>
-        <small v-if="status.job.extraction.cached">另有 {{ status.job.extraction.cached }} 批成功返回的候选已缓存，继续处理可复用。</small>
-        <small>批次可能按文本密度细分；只有发布完成才表示全流程完成。</small>
-        <span>{{ status.job.usage.request_count }} 次模型请求 · 已报告输入 {{ status.job.usage.reported_input_tokens }} / 输出 {{ status.job.usage.reported_output_tokens }} token<span v-if="status.job.usage.unknown_request_count"> · {{ status.job.usage.unknown_request_count }} 次请求用量未知</span></span>
-        <small v-if="status.job.usage.unknown_request_count">超时或供应商未返回用量的请求无法统计 token，可能已产生消耗；继续构建会复用已完成批次。</small>
-        <p v-if="status.job.error_code" role="alert">{{ buildErrors[status.job.error_code] || '构建未能完成，已保存进度。请检查模型配置后继续构建。' }}</p>
-      </div>
-      </details>
-      <details v-if="quality"><summary>实体筛选与身份校验</summary>
-        <p>地点、物品、功法及概念默认至少保留 {{ quality.minimum_mentions }} 处已定位提及，低频但有剧情重要性依据的实体仍可保留。人物和组织不按频次删除。</p>
-        <ul><li v-for="(count, type) in quality.candidates_before" :key="type">{{ typeLabels[type] || type }}：候选记录 {{ count }} → {{ quality.candidates_after[type] || 0 }}<template v-if="quality.entities_after"> · 最终实体 {{ quality.entities_after[type] || 0 }}</template></li></ul>
-        <p>候选记录可包含同一实体的多次提及；频次按原文位置去重，是已抽取提及数。</p>
-        <ul><li v-for="(count, reason) in quality.filtered_reasons" :key="reason">{{ filterLabels[reason] || reason }}：过滤 {{ count }} 项</li></ul>
-        <p>拒绝身份线索 {{ quality.identity_rejected_count }} 条 · 身份不确定 {{ quality.ambiguous_count }} 次 · 批量消歧请求 {{ quality.batch_request_count }} 次</p>
-        <p v-if="quality.mention_count !== undefined">本次构建：已绑定 {{ quality.resolved_mentions }}/{{ quality.mention_count }} 处提及 · 待确认 {{ quality.pending_mentions }} 处 · 待确认事实 {{ quality.pending_facts }} 条。待确认记录不单独生成图节点。</p>
-      </details>
-      <div class="graph-actions">
-        <button v-if="running" class="button" :disabled="busy || status.job?.stop_requested" @click="graph.stop()">{{ status.job?.stop_requested ? '正在停止…' : '停止构建' }}</button>
-        <template v-else>
-          <button v-if="status.job?.can_resume" class="button primary" :disabled="busy" @click="graph.build('resume')">继续构建</button>
-          <button class="button" :class="{ primary: !status.available }" :disabled="busy || !status.configured || !!status.error_code" @click="graph.build(status.available || status.job ? 'rebuild' : 'start')">{{ busy ? '提交中…' : status.available || status.job ? '重新构建' : '构建图谱' }}</button>
-        </template>
-        <button class="text-button" :disabled="busy" @click="graph.refresh()">刷新状态</button>
-      </div>
-      <details v-if="status.job?.events.length"><summary>构建诊断（最近 {{ status.job.events.length }} 条）</summary><small>过滤项是校验后未采纳的候选；本次停止原因见上方提示。</small><ul><li v-for="(event, i) in status.job.events" :key="i">{{ eventLabel(event.code) }}</li></ul></details>
-      </div>
-    </details>
-    <div v-else class="empty-state"><p>正在读取图谱状态…</p></div>
-
-    <GraphEdits v-if="status" :novel-id="novelId" :version="status.active_version || ''" :root="root" :running="running"
-        :pending-corrections="status.revision?.pending_corrections || 0" @changed="graph.refresh()" />
-    <template v-if="status?.available">
-      <details class="graph-unresolved"><summary>待确认的原文提及</summary>
+    <div v-if="!status" class="empty-state" role="status"><p>正在读取图谱状态…</p><button v-if="error" class="button secondary" @click="graph.refresh()">重新加载</button></div>
+    <template v-if="status">
+      <GraphBuildPage v-show="section === 'build'" :status="status" :busy="busy" :running="running" :active="active && section === 'build'" @build="graph.build" @stop="graph.stop" @refresh="graph.refresh" />
+      <GraphEdits :novel-id="novelId" :version="status.active_version || ''" :root="root" :running="running" :pending-corrections="status.revision?.pending_corrections || 0" :section="section === 'history' ? 'history' : 'entities'" :active="active && (section === 'history' || section === 'entities')" @changed="graph.refresh()"><template #unresolved>      <section class="graph-unresolved"><div class="workspace-toolbar"><strong>待确认的原文提及</strong><span class="toolbar-hint">身份尚未确定的原文记录</span></div>
         <p>这里保留尚无法确定身份的称呼及原文，相关事实暂不进入正式图谱。</p>
         <button type="button" class="text-button" :disabled="unresolvedBusy || (unresolvedTotal !== null && unresolvedItems.length >= unresolvedTotal)" @click="loadUnresolved">{{ unresolvedBusy ? '加载中…' : unresolvedTotal === null ? '查看待确认记录' : '加载更多' }}</button>
         <p v-if="unresolvedError" role="alert">{{ unresolvedError }}</p>
@@ -260,8 +171,13 @@ onBeforeUnmount(() => { disposed = true; chapterSequence++; evidenceSequence++; 
           <p v-if="item.candidates.length">候选：{{ item.candidates.map(c => c.name).join('、') }}</p>
           <button type="button" class="text-button" @click="readContext(item.anchor)">读取原文</button>
         </li></ul>
-      </details>
-      <form class="graph-controls" @submit.prevent="submit">
+      </section>
+</template></GraphEdits>
+      <section v-show="section === 'explore'" class="graph-explore-page">
+        <div class="workspace-toolbar graph-explore-toolbar"><div class="toolbar-summary"><span class="status-pill" :class="{ working: running }">{{ running ? '正在构建' : status.available ? '图谱就绪' : '尚未构建' }}</span><span v-if="status.counts" class="toolbar-hint">{{ status.counts.entity_count }} 个实体 · {{ status.counts.relation_count }} 条关系</span></div><div class="toolbar-actions"><button class="button secondary mobile-query-button" @click="queryOpen = true">查询与筛选</button><button v-if="result" class="button secondary mobile-query-button" @click="inspectorOpen = true">关系与证据</button><button class="text-button" @click="emit('navigate', 'build')">{{ running ? '查看构建进度 →' : '构建任务 →' }}</button></div></div>
+        <div v-if="!status.available" class="empty-state graph-unbuilt"><span class="empty-illustration">◇</span><h2>让故事里的关系浮现</h2><p>先从原文构建图谱，再探索人物、地点和事件之间的联系。</p><button class="button primary" @click="emit('navigate', 'build')">前往构建图谱</button></div>
+        <div v-else class="graph-explore-layout">
+          <InspectorPane class="graph-query-pane" :open="active && section === 'explore' && queryOpen" title="查询与筛选" @close="queryOpen = false">      <form class="graph-controls" @submit.prevent="submit">
         <label class="field"><span>查询方式</span><select v-model="mode"><option value="neighbors">查看相关人物与事物</option><option value="paths">查找两者之间的联系</option></select></label>
         <details class="graph-filter-details"><summary>按章节、类型与关联层数筛选</summary><div class="graph-filter-grid">
         <label class="field"><span>实体类型</span><select v-model="entityType"><option value="">全部类型</option><option v-for="type in status.ontology.entity_types" :key="type" :value="type">{{ typeLabels[type] || type }}</option></select></label>
@@ -275,34 +191,34 @@ onBeforeUnmount(() => { disposed = true; chapterSequence++; evidenceSequence++; 
           <p v-if="root" class="graph-notice">其他名称：{{ root.aliases.length ? root.aliases.join('、') : '暂无已收录别名' }}</p>
           <p v-if="root?.person_name" class="graph-notice">姓：{{ root.person_name.family_name }} · 名：{{ root.person_name.given_name }}</p>
           <p v-if="root?.name_forms?.length" class="graph-notice">名称形式：{{ root.name_forms.map(f => `${f.name}（${nameFormLabels[f.kind]}）`).join('、') }}</p>
-          <ul v-if="candidates.length" class="graph-candidates"><li v-for="node in candidates" :key="node.id"><button type="button" @click="choose(node)">{{ node.name }} · {{ typeLabels[node.type] }} · {{ node.first_mention?.section_title || node.first_mention?.section_id }} 行 {{ node.first_mention?.start_line }}<small v-if="node.aliases.length">其他名称：{{ node.aliases.join('、') }}</small></button></li></ul>
+          <ul v-if="candidates.length" class="graph-candidates"><li v-for="node in candidates" :key="node.id"><button type="button" @click="choose(node); queryOpen = false">{{ node.name }} · {{ typeLabels[node.type] }} · {{ node.first_mention?.section_title || node.first_mention?.section_id }} 行 {{ node.first_mention?.start_line }}<small v-if="node.aliases.length">其他名称：{{ node.aliases.join('、') }}</small></button></li></ul>
         </div>
         <div v-if="mode === 'paths'" class="graph-entity-search"><label class="field"><span>目标实体</span><input v-model="targetText" placeholder="输入另一个实体名称" /></label>
           <div v-if="target" class="tags"><span>已选：{{ target.name }}</span></div>
           <p v-if="target" class="graph-notice">其他名称：{{ target.aliases.length ? target.aliases.join('、') : '暂无已收录别名' }}</p>
-          <ul v-if="targetCandidates.length" class="graph-candidates"><li v-for="node in targetCandidates" :key="node.id"><button type="button" @click="choose(node, 1)">{{ node.name }} · {{ typeLabels[node.type] }} · {{ node.first_mention?.section_title || node.first_mention?.section_id }} 行 {{ node.first_mention?.start_line }}<small v-if="node.aliases.length">其他名称：{{ node.aliases.join('、') }}</small></button></li></ul>
+          <ul v-if="targetCandidates.length" class="graph-candidates"><li v-for="node in targetCandidates" :key="node.id"><button type="button" @click="choose(node, 1); queryOpen = false">{{ node.name }} · {{ typeLabels[node.type] }} · {{ node.first_mention?.section_title || node.first_mention?.section_id }} 行 {{ node.first_mention?.start_line }}<small v-if="node.aliases.length">其他名称：{{ node.aliases.join('、') }}</small></button></li></ul>
         </div>
         <button class="button primary" :disabled="loading || !root || (mode === 'paths' && !target) || !!rangeError || !!chapterError">{{ loading ? '检索中…' : '查询关系' }}</button>
       </form>
       <p v-if="rangeError || chapterError" class="field-error" role="alert">{{ rangeError || chapterError }}</p>
-      <p class="graph-notice">范围：{{ start ? chapters.find(c => c.chapter_id === start)?.title || '指定起点' : '全书开头' }} — {{ end ? chapters.find(c => c.chapter_id === end)?.title || '指定终点' : '全书末尾' }}。关系以原文为准，章节顺序未必等于故事发生顺序。</p>
-      <template v-if="result">
-        <p v-if="result.truncated" class="graph-warning" role="status">结果已截断或检索未完成（{{ result.truncation_reason }}），请缩小范围。</p>
-        <KnowledgeGraphCanvas v-if="result.edges.length" :result="result" :reset-key="`${root?.id}:${mode}`" :root-id="root?.id" :selected-edge-id="selectedEdge?.id" :labels="labels" :symmetric="symmetric" @node="chooseNode" @clear="clearEdgeSelection" @edge="id => { const edge = result?.edges.find(e => e.id === id); if (edge) selectEdge(edge) }" />
-        <p v-if="!result.edges.length" class="graph-notice">{{ mode === 'paths' && result.paths.length ? '起点与终点是同一实体：零跳路径。' : result.search_complete ? '在当前图谱、范围及跳数内未找到关系。' : '本次预算内未找到关系，检索尚未完成。' }}</p>
-        <ol v-if="result.paths.length" class="graph-paths"><li v-for="(path, i) in result.paths" :key="i">{{ path.node_ids.map(name).join(' — ') }}</li></ol>
-        <div class="graph-results">
-          <section><h3>关系列表 · {{ result.edges.length }} 条</h3><ul class="graph-edge-list"><li v-for="edge in result.edges" :key="edge.id"><button type="button" :class="{ selected: selectedEdge?.id === edge.id }" @click="selectEdge(edge)">
+      <p class="graph-notice filter-range">范围：{{ start ? chapters.find(c => c.chapter_id === start)?.title || '指定起点' : '全书开头' }} — {{ end ? chapters.find(c => c.chapter_id === end)?.title || '指定终点' : '全书末尾' }}。关系以原文为准，章节顺序未必等于故事发生顺序。</p>
+</InspectorPane>
+          <div class="graph-stage"><p v-if="result?.truncated" class="graph-warning" role="status">结果已截断或检索未完成（{{ result.truncation_reason }}），请缩小范围。</p>        <KnowledgeGraphCanvas v-if="result?.edges.length" :result="result" :reset-key="`${root?.id}:${mode}`" :root-id="root?.id" :selected-edge-id="selectedEdge?.id" :labels="labels" :symmetric="symmetric" @node="chooseNode" @clear="clearEdgeSelection" @edge="id => { const edge = result?.edges.find(e => e.id === id); if (edge) selectEdge(edge) }" />
+        <p v-if="result && !result.edges.length" class="graph-notice">{{ mode === 'paths' && result.paths.length ? '起点与终点是同一实体：零跳路径。' : result.search_complete ? '在当前图谱、范围及跳数内未找到关系。' : '本次预算内未找到关系，检索尚未完成。' }}</p>
+        <ol v-if="result?.paths.length" class="graph-paths"><li v-for="(path, i) in result.paths" :key="i">{{ path.node_ids.map(name).join(' — ') }}</li></ol>
+<div v-if="!result" class="graph-canvas-empty"><div class="empty-orbit"><i /><i /><i /><span>人物 · 故事 · 联系</span></div><h2>{{ loading ? '正在展开关系…' : '从一个名字，走进故事' }}</h2><p>搜索并选择人物，展开关系与原文依据。</p><button class="button secondary mobile-query-button" @click="queryOpen = true">选择查询实体</button></div></div>
+          <InspectorPane :open="active && section === 'explore' && inspectorOpen" title="关系与证据" @close="inspectorOpen = false"><nav class="segmented-tabs" aria-label="图谱检查器"><button :aria-current="inspectorTab === 'relations' ? 'page' : undefined" @click="inspectorTab = 'relations'">关系列表 <span v-if="result">{{ result.edges.length }}</span></button><button :aria-current="inspectorTab === 'evidence' ? 'page' : undefined" @click="inspectorTab = 'evidence'">原文证据</button></nav><template v-if="result">          <section v-show="inspectorTab === 'relations' && result"><ul class="graph-edge-list"><li v-for="edge in result.edges" :key="edge.id"><button type="button" :class="{ selected: selectedEdge?.id === edge.id }" @click="selectEdge(edge)">
             {{ name(edge.source) }} {{ symmetric.includes(edge.type) ? '↔' : '→' }} {{ name(edge.target) }} · {{ labels[edge.type] || edge.type }}
             <strong v-if="edge.polarity === 'denied'">（否认）</strong><span v-if="edge.statement_mode === 'character_claim'">（人物说法）</span><small>{{ edge.evidence_total }} 组原文依据</small>
           </button></li></ul></section>
-          <section class="graph-evidence"><h3>原文证据</h3><p v-if="!selectedEdge">点击关系查看原文。</p><article v-for="group in groups" :key="group.id"><blockquote v-for="(span, i) in group.spans" :key="i"><p>{{ span.quote }}</p><small>{{ span.section_title || span.section_id }} · 行 {{ span.start_line }}–{{ span.end_line }}</small><button class="text-button" @click="readContext(span)">展开原文上下文</button></blockquote></article>
+          <section v-show="inspectorTab === 'evidence'" class="graph-evidence"><p v-if="!selectedEdge">点击关系查看原文。</p><article v-for="group in groups" :key="group.id"><blockquote v-for="(span, i) in group.spans" :key="i"><p>{{ span.quote }}</p><small>{{ span.section_title || span.section_id }} · 行 {{ span.start_line }}–{{ span.end_line }}</small><button class="text-button" @click="readContext(span)">展开原文上下文</button></blockquote></article>
             <button v-if="groups.length < evidenceTotal" class="text-button" :disabled="evidenceBusy" @click="moreEvidence">加载更多证据（{{ groups.length }}/{{ evidenceTotal }}）</button>
             <div v-if="context" class="context-block"><strong>展开原文上下文（可能包含筛选范围外的邻接段）</strong><p v-for="chunk in context.chunks" :key="chunk.chunk_id"><small>Ln {{ chunk.start_line }}–{{ chunk.end_line }}</small>{{ chunk.text }}</p></div>
           </section>
+</template><div v-else class="inspector-empty"><span>每条关系，都有出处</span><p>查询后选择一条关系，在这里核对原文。</p></div></InspectorPane>
         </div>
-      </template>
-      <p v-else-if="!loading" class="graph-notice">搜索并选择实体，开始探索。自动抽取可能遗漏或误判，请结合原文核实。</p>
+      </section>
+      <PanelDrawer :open="active && section === 'entities' && mentionOpen" title="待确认提及的原文" @close="mentionOpen = false"><div v-if="mentionContext" class="context-block source-reader"><p v-for="chunk in mentionContext.chunks" :key="chunk.chunk_id"><span>行 {{ chunk.start_line }}–{{ chunk.end_line }}</span>{{ chunk.text }}</p></div></PanelDrawer>
     </template>
   </section>
 </template>

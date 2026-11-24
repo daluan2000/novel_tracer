@@ -1,8 +1,24 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from pathlib import Path
+
 import pytest
 
 from novel_agent.corpus.repository import NovelCorpus
+
+
+@pytest.fixture
+def local_fixture_path() -> Callable[[str], Path]:
+    """Skip only tests whose optional local reference data is unavailable."""
+
+    def require_file(filename: str) -> Path:
+        path = Path(__file__).parent / "fixtures" / filename
+        if not path.is_file():
+            pytest.skip(f"Local test fixture not found: tests/fixtures/{filename}")
+        return path
+
+    return require_file
 
 
 @pytest.fixture(autouse=True)

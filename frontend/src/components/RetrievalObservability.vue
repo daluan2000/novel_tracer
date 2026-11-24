@@ -3,13 +3,16 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { api } from '../api'
 import type { RetrievalStatus } from '../types'
 
-const props = withDefaults(defineProps<{ novelId: string; polling?: boolean; refreshKey?: number }>(), {
+const props = withDefaults(defineProps<{ novelId: string; polling?: boolean; refreshKey?: number; dashboard?: boolean }>(), {
   polling: false,
   refreshKey: 0,
+  dashboard: false,
 })
 
 const status = ref<RetrievalStatus | null>(null)
 const statusError = ref('')
+const activeGroup = ref('index')
+let generation = 0, disposed = false
 let timer: ReturnType<typeof setTimeout> | null = null
 const statusNames: Record<string, string> = {
   lexical_ready: '关键词检索可用',
@@ -32,14 +35,18 @@ function schedule() {
 }
 
 async function refresh() {
-  if (!props.novelId) return
+  if (!props.novelId || disposed) return
+  const current = ++generation
   try {
-    status.value = await api.retrievalStatus(props.novelId)
+    const next = await api.retrievalStatus(props.novelId)
+    if (current !== generation || disposed) return
+    status.value = next
     statusError.value = ''
   } catch (cause) {
+    if (current !== generation || disposed) return
     statusError.value = cause instanceof Error ? cause.message : '检索状态读取失败。'
   } finally {
-    schedule()
+    if (current === generation && !disposed) schedule()
   }
 }
 
@@ -56,35 +63,24 @@ watch(
   },
   { immediate: true },
 )
-onBeforeUnmount(() => { if (timer) clearTimeout(timer) })
+onBeforeUnmount(() => { disposed = true; generation++; if (timer) clearTimeout(timer) })
+const indexMetrics = computed(() => {
+  const m = status.value?.metrics
+  return m ? [['索引编码请求', m.document_request_count], ['已编码片段', m.document_text_count.toLocaleString()], ['索引输入字符', m.document_input_characters.toLocaleString()], ['索引缓存', cacheLabel.value]] : []
+})
+const queryMetrics = computed(() => {
+  const m = status.value?.metrics
+  return m ? [['查询编码请求', m.query_request_count], ['查询输入字符', m.query_input_characters.toLocaleString()], ['查询缓存命中', m.query_cache_hit_count], ['最近请求耗时', m.last_request_elapsed_seconds === null ? '—' : `${m.last_request_elapsed_seconds.toFixed(2)} 秒`]] : []
+})
 defineExpose({ refresh })
 </script>
 
 <template>
-  <section class="observability-card retrieval-observability" aria-live="polite">
-    <div class="observability-heading">
-      <div><p class="mini-title">语义检索用量与运行状态</p><small>若服务商未返回准确的 Token 用量，则按请求次数、文本数和字符数统计</small></div>
-      <span v-if="status" class="mode-chip" :class="`mode-${status.active_mode}`">{{ modeLabel }}</span>
-    </div>
-
-    <p v-if="statusError" class="inline-anomaly level-error">{{ statusError }}</p>
+  <section class="observability-card retrieval-observability" :class="{ dashboard }" aria-live="polite">
+    <div class="observability-heading"><div><h2>检索运行状态</h2><p class="muted-caption">语义检索用量与运行状态</p></div><span v-if="status" class="mode-chip" :class="`mode-${status.active_mode}`">{{ modeLabel }}</span></div>
+    <p v-if="statusError" class="inline-anomaly level-error" role="alert">{{ statusError }}</p>
     <template v-if="status">
-      <dl class="usage-grid">
-        <div><dt>检索状态</dt><dd>{{ statusNames[status.status] }}</dd></div>
-        <div><dt>语义编码模型</dt><dd>{{ status.embedding_model || '未配置' }}</dd></div>
-        <div><dt>检索片段</dt><dd>{{ status.passage_count.toLocaleString() }}</dd></div>
-        <div><dt>索引缓存</dt><dd>{{ cacheLabel }}</dd></div>
-        <div><dt>索引编码请求</dt><dd>{{ status.metrics.document_request_count }}</dd></div>
-        <div><dt>已编码片段</dt><dd>{{ status.metrics.document_text_count.toLocaleString() }}</dd></div>
-        <div><dt>索引输入字符</dt><dd>{{ status.metrics.document_input_characters.toLocaleString() }}</dd></div>
-        <div><dt>查询编码请求</dt><dd>{{ status.metrics.query_request_count }}</dd></div>
-        <div><dt>查询输入字符</dt><dd>{{ status.metrics.query_input_characters.toLocaleString() }}</dd></div>
-        <div><dt>查询缓存命中</dt><dd>{{ status.metrics.query_cache_hit_count }}</dd></div>
-        <div><dt>编码失败</dt><dd>{{ status.metrics.failed_request_count }}</dd></div>
-        <div><dt>改用关键词检索</dt><dd>{{ status.metrics.fallback_count }}</dd></div>
-        <div><dt>最近请求耗时</dt><dd>{{ status.metrics.last_request_elapsed_seconds === null ? '—' : `${status.metrics.last_request_elapsed_seconds.toFixed(2)} 秒` }}</dd></div>
-      </dl>
-
+      <dl class="retrieval-overview"><div><dt>当前状态</dt><dd>{{ statusNames[status.status] }}</dd></div><div><dt>可检索片段</dt><dd>{{ status.passage_count.toLocaleString() }}</dd></div><div><dt>查询请求</dt><dd>{{ status.metrics.query_request_count }}</dd></div><div><dt>异常 / 回退</dt><dd>{{ status.metrics.failed_request_count }} / {{ status.metrics.fallback_count }}</dd></div></dl>
       <div v-if="status.embedding_enabled" class="embedding-progress" aria-live="polite">
         <div>
           <strong>{{ status.status === 'building' ? '语义索引构建中' : status.status === 'hybrid_ready' ? '语义索引已就绪' : '语义索引暂不可用' }}</strong>
@@ -95,7 +91,9 @@ defineExpose({ refresh })
         </div>
       </div>
 
-      <div class="anomaly-block">
+
+      <nav class="segmented-tabs" aria-label="检索统计"><button v-for="item in [{id:'index',label:'索引用量'},{id:'query',label:'查询统计'},{id:'events',label:'异常记录'}]" :key="item.id" :aria-current="activeGroup === item.id ? 'page' : undefined" @click="activeGroup = item.id">{{ item.label }}<span v-if="item.id === 'events' && status.events.length">{{ status.events.length }}</span></button></nav>
+      <div class="retrieval-detail"><div v-show="activeGroup !== 'events'"><dl class="usage-grid"><div v-for="[label, value] in activeGroup === 'index' ? indexMetrics : queryMetrics" :key="label"><dt>{{ label }}</dt><dd>{{ value }}</dd></div></dl><p v-if="activeGroup === 'index'" class="muted-caption">语义编码模型：{{ status.embedding_model || '未配置' }}</p><p class="muted-caption">服务商未返回准确 Token 用量时，按请求次数、文本数和字符数统计。</p></div><div v-show="activeGroup === 'events'">      <div class="anomaly-block">
         <div class="anomaly-title"><strong>异常与回退记录</strong><span>最近 {{ status.events.length }} 条</span></div>
         <ol v-if="status.events.length" class="anomaly-list">
           <li v-for="(event, index) in [...status.events].reverse()" :key="`${event.timestamp}-${event.code}-${index}`" :class="`level-${event.level}`">
@@ -105,7 +103,7 @@ defineExpose({ refresh })
         </ol>
         <p v-else class="no-anomaly">暂无异常记录。</p>
       </div>
-    </template>
-    <p v-else-if="!statusError" class="no-anomaly">正在读取检索状态…</p>
+</div></div>
+    </template><p v-else-if="!statusError" class="compact-empty">正在读取检索状态…</p>
   </section>
 </template>
